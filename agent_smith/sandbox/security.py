@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Callable, Any
 
 
+_real_open = builtins.open
+
+
 class SecurityError(Exception):
     """Exception raised when code violates sandbox security policies."""
     pass
@@ -53,11 +56,37 @@ class ImportSecurityValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class FileSystemGuard:
+    """Enforces directory boundary constraints and safe file operations."""
+    def __init__(self, allowed_directories: list[str | Path]) -> None:
+        self.allowed_directories = self._normalize_paths(allowed_directories)
+
+    def _normalize_paths(self, directories: list[str | Path]) -> list[Path]:
+        """Convert input paths to canonical absolute Path instances."""
+        return [Path(d).resolve() for d in directories]
+
+    def validate_path(self, path: str | Path) -> Path:
+        """Resolve and verify if a path falls strictly within
+         allowed boundaries."""
+        target = Path(path).resolve()
+        for allowed_dir in self.allowed_directories:
+            if target.is_relative_to(allowed_dir):
+                return target
+        raise SecurityError(f"Access denied: '{path}' (resolved to '{target}')"
+                            " is outside allowed directories.")
+
+    def open(self, file: str | Path, *args: Any, **kwargs: Any) -> Any:
+        """Safely open a file after validating its target directory."""
+        target = self.validate_path(file)
+        return _real_open(target, *args, **kwargs)
+
+
 def validate_code_security(code: str, authorized_imports: list[str]) -> None:
     """Validate python code string against import security policies."""
     tree = ast.parse(code)
     validator = ImportSecurityValidator(authorized_imports=authorized_imports)
     validator.visit(tree)
+
 
 def create_safe_open(allowed_directories: list[str]) -> Callable[..., Any]:
     """Create a restricted version of open() limited to allowed directories."""
