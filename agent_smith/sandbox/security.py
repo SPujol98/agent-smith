@@ -1,4 +1,7 @@
 import ast
+import builtins
+from pathlib import Path
+from typing import Callable, Any
 
 
 class SecurityError(Exception):
@@ -8,6 +11,8 @@ class SecurityError(Exception):
 
 class ImportSecurityValidator(ast.NodeVisitor):
     """AST visitor that validates imports against an allowlist."""
+    RESTRICTED_CALLS = {"__import__", "eval", "exec", "compile"}
+
     def __init__(self, authorized_imports: list[str]) -> None:
         super().__init__()
         self.authorized_imports = authorized_imports
@@ -38,3 +43,24 @@ class ImportSecurityValidator(ast.NodeVisitor):
             if node.module and not self._is_module_allowed(node.module):
                 raise SecurityError(f"{node.module} is a forbidden module.")
         self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Intercept dangerous direct calls to restricted functions."""
+        if (isinstance(node.func, ast.Name) and
+                node.func.id in self.RESTRICTED_CALLS):
+            raise SecurityError(f"Forbidden call to '{node.func.id}()' "
+                                f"detected (line {node.lineno})")
+        self.generic_visit(node)
+
+
+def validate_code_security(code: str, authorized_imports: list[str]) -> None:
+    """Validate python code string against import security policies."""
+    tree = ast.parse(code)
+    validator = ImportSecurityValidator(authorized_imports=authorized_imports)
+    validator.visit(tree)
+
+def create_safe_open(allowed_directories: list[str]) -> Callable[..., Any]:
+    """Create a restricted version of open() limited to allowed directories."""
+    def safe_open(file: str | Path, *args: Any, **kwargs: Any) -> Any:
+        pass
+    return safe_open
