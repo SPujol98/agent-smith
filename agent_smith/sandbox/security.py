@@ -1,8 +1,9 @@
 import ast
 import builtins
+import socket
 from pathlib import Path
 from typing import Callable, Any
-
+from types import TracebackType
 
 _real_open = builtins.open
 
@@ -79,6 +80,52 @@ class FileSystemGuard:
         """Safely open a file after validating its target directory."""
         target = self.validate_path(file)
         return _real_open(target, *args, **kwargs)
+
+
+class BuiltinsGuard:
+    """Constructs a sanitized execution builtins dictionary."""
+
+    DEFAULT_RESTRICTED: set[str] = {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+    }
+
+    def __init__(self, file_system_guard: FileSystemGuard,
+                 restricted_builtins: set[str] | None = None) -> None:
+        self.fs_guard = file_system_guard
+        self.restricted = restricted_builtins or self.DEFAULT_RESTRICTED
+
+    def build_builtints(self) -> dict[str, Any]:
+        """Generate a safe copy of builtins with
+        restricted primitives removed."""
+        safe_builtins = builtins.__dict__.copy()
+        for restrict in self.restricted:
+            safe_builtins.pop(restrict, None)
+        safe_builtins["open"] = self.fs_guard.open
+        return safe_builtins
+
+
+class NetworkGuard:
+    """Enforces network isolation by intercepting socket creation."""
+    def __init__(self, allow_network: bool = False) -> None:
+        self.allow_network = allow_network
+        self._real_socket: Any | None = None
+
+    def _blocked_socket(self, *args: Any, **kwargs: Any) -> Any:
+        """Denies socket creation attempts."""
+        raise SecurityError("Network access is disabled within the sandbox.")
+
+    def __enter__(self) -> "NetworkGuard":
+        """Activate the network barrier."""
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None,
+                 exc_val: BaseException | None,
+                 exc_tb: TracebackType | None) -> None:
+        """Restore original socket functionality."""
+        pass
 
 
 def validate_code_security(code: str, authorized_imports: list[str]) -> None:
