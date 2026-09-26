@@ -119,13 +119,18 @@ class NetworkGuard:
 
     def __enter__(self) -> "NetworkGuard":
         """Activate the network barrier."""
+        if not self.allow_network:
+            self._real_socket = socket.socket
+            setattr(socket, "socket", self._blocked_socket)
         return self
 
     def __exit__(self, exc_type: type[BaseException] | None,
                  exc_val: BaseException | None,
                  exc_tb: TracebackType | None) -> None:
         """Restore original socket functionality."""
-        pass
+        if self._real_socket is not None:
+            setattr(socket, "socket", self._real_socket)
+            self._real_socket = None
 
 
 def validate_code_security(code: str, authorized_imports: list[str]) -> None:
