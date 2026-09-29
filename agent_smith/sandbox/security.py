@@ -97,7 +97,7 @@ class BuiltinsGuard:
         self.fs_guard = file_system_guard
         self.restricted = restricted_builtins or self.DEFAULT_RESTRICTED
 
-    def build_builtints(self) -> dict[str, Any]:
+    def build_builtins(self) -> dict[str, Any]:
         """Generate a safe copy of builtins with
         restricted primitives removed."""
         safe_builtins = builtins.__dict__.copy()
