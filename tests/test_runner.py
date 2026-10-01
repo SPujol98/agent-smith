@@ -72,3 +72,15 @@ with open(r'{target_path}', 'w') as vault:
         # Assert
         assert target_path.exists()
         assert target_path.read_text() == 'valid output'
+
+
+def test_runner_blocks_network_access() -> None:
+    # Arrange
+    runner = SandboxRunner(authorized_imports=["socket"])
+    code = """
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+"""
+
+    # Act & Assert
+    with pytest.raises(SecurityError):
+        runner.run(code)

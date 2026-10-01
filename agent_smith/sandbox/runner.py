@@ -20,6 +20,9 @@ class SandboxRunner:
         execution_env: dict[str, Any] = {
             "__builtins__": self.builtins_guard.build_builtins()
             }
+        for module_name in self.authorized_imports:
+            execution_env[module_name] = __import__(module_name)
+
         with NetworkGuard():
             exec(code, execution_env)
         return execution_env
