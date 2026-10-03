@@ -6,6 +6,7 @@ import pytest
 
 from agent_smith.sandbox.runner import SandboxRunner
 from agent_smith.sandbox.security import SecurityError
+from agent_smith.sandbox.result import ExecutionResult
 
 
 def test_runner_executes_safe_code() -> None:
@@ -25,10 +26,11 @@ def test_runner_executes_safe_code() -> None:
         )
 
         # Act
-        execution_env = runner.run(code)
+        exec_result = runner.run(code)
 
         # Assert
-        assert execution_env.get("result") == 10
+        assert exec_result.success is True
+        assert exec_result.result_env.get("result") == 10
 
 
 def test_runner_blocks_unauthorized_imports() -> None:
@@ -84,3 +86,55 @@ s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # Act & Assert
     with pytest.raises(SecurityError):
         runner.run(code)
+
+
+def test_runner_returns_execution_result_on_success() -> None:
+    # Arrange
+    runner = SandboxRunner()
+    msg = "hello"
+    code = f"""
+msg = "{msg}"
+print(msg)
+"""
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert isinstance(result, ExecutionResult)
+    assert result.success is True
+    assert result.stdout == f"{msg}\n"
+    assert result.stderr == ""
+    assert result.result_env.get("msg") == msg
+    assert result.error is None
+
+
+def test_runner_captures_runtime_exception_in_result() -> None:
+    # Arrange
+    runner = SandboxRunner()
+    code = """
+x = 1 / 0
+"""
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is False
+    assert result.error is not None
+    assert "ZeroDivisionError" in result.error
+
+
+def test_runner_enforces_execution_timeout() -> None:
+    # Arrange
+    runner = SandboxRunner(timeout=1)
+    code = """
+while True:
+    pass
+"""
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is False
+    assert result.error is not None
+    assert "TimeoutError" in result.error
