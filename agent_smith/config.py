@@ -34,7 +34,7 @@ class SandboxConfig(BaseModel):
             raise FileNotFoundError(f"MISS config file: {filepath}")
         except ValidationError as e:
             raise ValueError("Invalid JSON structure in "
-                                  f"{filepath}:\n{e}")
+                             f"{filepath}:\n{e}")
 
     def save_template(self, filepath: str | Path
                       = "sandbox_template.json") -> None:
