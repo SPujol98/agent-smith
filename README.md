@@ -1,1 +1,1 @@
-*This project has been created as part of the 42 curriculum by spujol-s and sasanche.*
+*This project has been created as part of the 42 curriculum by spujol-s, vvan-ach and sasanche.*
