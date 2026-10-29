@@ -6,6 +6,7 @@ from typing import Callable, Any
 from types import TracebackType
 
 _real_open = builtins.open
+_real_import = builtins.__import__
 
 
 class SecurityError(Exception):
@@ -22,16 +23,7 @@ class ImportSecurityValidator(ast.NodeVisitor):
         self.authorized_imports = authorized_imports
 
     def _is_module_allowed(self, module_name: str) -> bool:
-        """Check if a module name matches the authorized imports allowlist."""
-        for pattern in self.authorized_imports:
-            if pattern == module_name:
-                return True
-            if pattern.endswith(".*"):
-                prefix = pattern[:-2]
-                if (prefix == module_name or
-                        module_name.startswith(f"{prefix}.")):
-                    return True
-        return False
+        return is_module_allowed(module_name, self.authorized_imports)
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -93,9 +85,21 @@ class BuiltinsGuard:
     }
 
     def __init__(self, file_system_guard: FileSystemGuard,
-                 restricted_builtins: set[str] | None = None) -> None:
+                 restricted_builtins: set[str] | None = None,
+                 authorized_imports: list[str] | None = None) -> None:
         self.fs_guard = file_system_guard
+        self.authorized_imports = authorized_imports or []
         self.restricted = restricted_builtins or self.DEFAULT_RESTRICTED
+
+    def _safe_import(self, name: str, globals: Any = None, locals: Any = None,
+                     fromlist: tuple[str, ...] = (), level: int = 0) -> Any:
+        """Intercept runtime __import__ calls and validate against
+        authorized imports."""
+        if level > 0:
+            raise SecurityError("Relative imports not allowed")
+        if not is_module_allowed(name, self.authorized_imports):
+            raise SecurityError(f"Unauthorized import attempt: '{name}'")
+        return _real_import(name, globals, locals, fromlist, level)
 
     def build_builtins(self) -> dict[str, Any]:
         """Generate a safe copy of builtins with
@@ -104,6 +108,7 @@ class BuiltinsGuard:
         for restrict in self.restricted:
             safe_builtins.pop(restrict, None)
         safe_builtins["open"] = self.fs_guard.open
+        safe_builtins["__import__"] = self._safe_import
         return safe_builtins
 
 
@@ -145,3 +150,16 @@ def create_safe_open(allowed_directories: list[str]) -> Callable[..., Any]:
     def safe_open(file: str | Path, *args: Any, **kwargs: Any) -> Any:
         pass
     return safe_open
+
+
+def is_module_allowed(module_name: str, authorized_imports: list[str]) -> bool:
+    """Check if a module name matches the authorized imports allowlist."""
+    for pattern in authorized_imports:
+        if pattern == module_name:
+            return True
+        if pattern.endswith(".*"):
+            prefix = pattern[:-2]
+            if (prefix == module_name or
+                    module_name.startswith(f"{prefix}.")):
+                return True
+    return False

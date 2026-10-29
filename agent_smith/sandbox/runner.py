@@ -22,15 +22,16 @@ class SandboxRunner:
         self.timeout = timeout
 
         self.fs_guard = FileSystemGuard(self.allowed_directories)
-        self.builtins_guard = BuiltinsGuard(self.fs_guard)
+        self.builtins_guard = BuiltinsGuard(
+            self.fs_guard,
+            authorized_imports=self.authorized_imports
+        )
 
     def run(self, code: str) -> ExecutionResult:
         validate_code_security(code, self.authorized_imports)
         execution_env: dict[str, Any] = {
             "__builtins__": self.builtins_guard.build_builtins()
             }
-        for module_name in self.authorized_imports:
-            execution_env[module_name] = __import__(module_name)
 
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()

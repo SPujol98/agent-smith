@@ -5,7 +5,9 @@ UV = uv
 CLI_SANDBOX = sandbox_template.json
 MAIN_MBPP    = agent_mbpp.py
 MAIN_SWEB    = agent_swebench.py
-SRC_DIRS     = agent_smith tests mcp_tools_mbpp.py mcp_tools_swebench.py
+SRC_DIRS = agent_smith tests
+SRC_FILES = agent_mbpp.py agent_swebench.py mcp_tools_mbpp.py mcp_tools_swebench.py main.py
+ALL_PYTHON_TARGETS = $(SRC_DIRS) $(wildcard $(SRC_FILES))
 
 # Marker file: touched by install, checked by everything else
 INSTALL_MARKER = .venv/.installed
@@ -50,15 +52,15 @@ test: check-install
 
 lint: check-install
 	@echo "$(CYAN)Executing flake8...$(NC)"
-	-$(UV) run flake8 $(SRC_DIRS)
+	$(UV) run flake8 $(ALL_PYTHON_TARGETS)
 	@echo "$(CYAN)Executing mypy...$(NC)"
-	-$(UV) run mypy $(SRC_DIRS) $(MYPY_FLAGS)
+	$(UV) run mypy $(ALL_PYTHON_TARGETS) $(MYPY_FLAGS)
 
 lint-strict: check-install
 	@echo "$(CYAN)Executing flake8...$(NC)"
-	-$(UV) run flake8 $(SRC_DIRS)
+	$(UV) run flake8 $(ALL_PYTHON_TARGETS)
 	@echo "$(CYAN)Executing mypy strict...$(NC)"
-	-$(UV) run mypy $(SRC_DIRS) --exclude .venv --strict --ignore-missing-imports
+	$(UV) run mypy $(ALL_PYTHON_TARGETS) --exclude .venv --strict --ignore-missing-imports
 
 clean:
 	@echo "$(CYAN)Cleaning temporary files...$(NC)"
