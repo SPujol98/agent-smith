@@ -1,6 +1,7 @@
 import ast
 import builtins
 import socket
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable, Any
 from types import TracebackType
@@ -51,10 +52,11 @@ class ImportSecurityValidator(ast.NodeVisitor):
 
 class FileSystemGuard:
     """Enforces directory boundary constraints and safe file operations."""
-    def __init__(self, allowed_directories: list[str | Path]) -> None:
+    def __init__(self, allowed_directories: Sequence[str | Path]) -> None:
         self.allowed_directories = self._normalize_paths(allowed_directories)
 
-    def _normalize_paths(self, directories: list[str | Path]) -> list[Path]:
+    def _normalize_paths(
+            self, directories: Sequence[str | Path]) -> list[Path]:
         """Convert input paths to canonical absolute Path instances."""
         return [Path(d).resolve() for d in directories]
 
