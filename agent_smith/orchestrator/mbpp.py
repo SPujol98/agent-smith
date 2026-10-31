@@ -1,6 +1,5 @@
 # Specific Logic and Prompts for MBPP (Mostly Basic Python Problems)
 from base import BaseOrchestrator
-# from types import List, Dict, Any
 
 
 class MBPPOrchestrator(BaseOrchestrator):
@@ -27,6 +26,3 @@ class MBPPOrchestrator(BaseOrchestrator):
             max_iterations=max_iterations,
         )
 
-    # def _call_llm(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-
-    # def _extract_code(self, llm_output: str) -> str:
