@@ -44,3 +44,7 @@ https://docs.mistral.ai/admin/identity-access/api-keys
 ## Implement
 
 Python Fire - 
+
+Soportar múltiples proveedores y modelos (Multi-Provider & Multi-Model): Significa que tu código no puede estar casado con un solo servicio (ej. solo OpenRouter). Debe ser capaz de trabajar con diferentes plataformas (OpenRouter, Groq, Together AI, vLLM local, etc.) y diferentes modelos de IA (qwen, llama, gpt, etc.).
+
+Múltiples API keys por proveedor + Fallback de proveedores (Multi-Key & Provider Fallback): Significa que dentro de un mismo proveedor tienes varias llaves (rotación de tokens), y además, si un proveedor entero se cae, da error 500 o se queda sin cuota en todas sus llaves, el sistema debe ser capaz de saltar automáticamente a otro proveedor diferente (hacer fallback).
