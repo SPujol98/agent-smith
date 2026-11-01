@@ -1,8 +1,10 @@
 """MCP server providing tools for MBPP task evaluation."""
 from __future__ import annotations
 
-import traceback
+
 from mcp.server.mcpserver import MCPServer
+from agent_smith.sandbox.runner import SandboxRunner
+from agent_smith.sandbox.security import SecurityError
 
 # MCP Server instance
 mcp = MCPServer("mbpp-tools")
@@ -23,15 +25,15 @@ def run_tests(candidate_code: str, test_list: list[str],
     imports_str = "\n".join(test_imports) if test_imports else ""
     tests_str = "\n".join(test_list)
     script = f"{imports_str}\n\n{candidate_code}\n\n{tests_str}"
-    execution_namespace: dict[str, object] = {}
+    srunner = SandboxRunner()
+
     try:
-        exec(script, execution_namespace)
-        return "All tests passed successfully."
-    except AssertionError:
-        return f"AssertionError: Test failed.\n{traceback.format_exc()}"
-    except Exception as e:
-        return (f"Execution error ({type(e).__name__}): {e}\n"
-                f"{traceback.format_exc()}")
+        result = srunner.run(script)
+        if result.success:
+            return "All tests passed successfully."
+        return result.error or result.stderr or "Test execution failed."
+    except SecurityError as e:
+        return f"SecurityError: {e}"
 
 
 if __name__ == "__main__":

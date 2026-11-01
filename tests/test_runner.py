@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import pytest
 
+from agent_smith.config import SandboxConfig
 from agent_smith.sandbox.runner import SandboxRunner
 from agent_smith.sandbox.security import SecurityError
 from agent_smith.sandbox.result import ExecutionResult
@@ -80,6 +81,7 @@ def test_runner_blocks_network_access() -> None:
     # Arrange
     runner = SandboxRunner(authorized_imports=["socket"])
     code = """
+import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 """
 
@@ -126,7 +128,8 @@ x = 1 / 0
 
 def test_runner_enforces_execution_timeout() -> None:
     # Arrange
-    runner = SandboxRunner(timeout=1)
+    fast_config = SandboxConfig(max_execution_time_seconds=1)
+    runner = SandboxRunner(config=fast_config)
     code = """
 while True:
     pass
@@ -137,4 +140,5 @@ while True:
     # Assert
     assert result.success is False
     assert result.error is not None
-    assert "TimeoutError" in result.error
+    assert ("timed out" in result.error.lower()
+            or "timeout" in result.error.lower())

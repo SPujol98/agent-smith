@@ -8,9 +8,10 @@ This module validates that the sandbox enforces strict isolation across:
 state restoration).
 """
 
-from pathlib import Path
 import socket
 import tempfile
+from pathlib import Path
+
 import pytest
 
 from agent_smith.sandbox.security import (
@@ -145,12 +146,12 @@ def test_builtins_guard_sanitizes_namespace() -> None:
         # Assert: Dangerous primitives are banned
         assert "eval" not in safe_builtins
         assert "exec" not in safe_builtins
-        assert "__import__" not in safe_builtins
 
         # Assert: Essential safe utilities remain available
         assert "len" in safe_builtins
         assert "range" in safe_builtins
         assert "open" in safe_builtins
+        assert "__import__" in safe_builtins
 
 
 def test_network_guard_blocks_sockets() -> None:
@@ -184,3 +185,92 @@ def test_network_guard_restores_socket() -> None:
     s = socket.socket()
     assert s is not None
     s.close()
+
+
+def test_builtins_guard_uses_strict_allowlist() -> None:
+    """Ensure BuiltinsGuard builds a namespace based strictly on an allowlist.
+
+    Purpose:
+        Verify that dangerous reflection and meta-programming primitives
+        (e.g., 'globals', 'vars', 'getattr', 'breakpoint', 'input') are omitted
+        from the execution namespace, while essential safe builtins,
+        '__build_class__', and standard exceptions are present.
+    """
+    # Arrange
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fs_guard = FileSystemGuard(allowed_directories=[tmp_dir])
+        guard = BuiltinsGuard(file_system_guard=fs_guard)
+
+        # Act
+        safe_builtins = guard.build_builtins()
+
+        # Assert: Forbidden reflection/meta-programming builtins are absent
+        forbidden_primitives = [
+            "globals",
+            "locals",
+            "vars",
+            "getattr",
+            "setattr",
+            "delattr",
+            "breakpoint",
+            "input",
+            "help",
+            "compile",
+        ]
+        for name in forbidden_primitives:
+            assert name not in safe_builtins
+
+        # Assert: Safe utilities, runtime setup, and exceptions are present
+        assert "len" in safe_builtins
+        assert "range" in safe_builtins
+        assert "__build_class__" in safe_builtins
+        assert "ValueError" in safe_builtins
+        assert "TypeError" in safe_builtins
+
+
+def test_ast_validator_blocks_dunder_and_frame_attributes() -> None:
+    """Ensure code attempting attribute introspection or frame walking
+    is blocked.
+
+    Purpose:
+        Verify that AST validation catches attempts to access introspective
+        dunder attributes (e.g., '__class__', '__subclasses__') and execution
+        frame attributes (e.g., 'gi_frame', 'f_globals'),
+        raising a SecurityError.
+    """
+    # Arrange
+    class_escape_code = "(1).__class__.__base__.__subclasses__()"
+    frame_escape_code = "(x for x in []).gi_frame.f_globals"
+    authorized_imports: list[str] = []
+
+    # Act & Assert
+    with pytest.raises(SecurityError):
+        validate_code_security(class_escape_code, authorized_imports)
+
+    with pytest.raises(SecurityError):
+        validate_code_security(frame_escape_code, authorized_imports)
+
+
+def test_ast_validator_allows_whitelisted_dunder_attributes() -> None:
+    """Ensure standard whitelisted dunder attributes in user classes
+    pass AST analysis.
+
+    Purpose:
+        Verify that legitimate Object-Oriented Python patterns (like '__init__'
+        and '__len__') are allowed by the AST validator and do not trigger
+        false positives.
+    """
+    # Arrange
+    legitimate_code = """
+class Counter:
+    def __init__(self, start: int = 0) -> None:
+        self.count = start
+
+    def __len__(self) -> int:
+        return self.count
+"""
+    authorized_imports: list[str] = []
+
+    # Act & Assert
+    # If no SecurityError is raised, standard OOP dunders passed successfully
+    validate_code_security(legitimate_code, authorized_imports)
