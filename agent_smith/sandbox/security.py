@@ -3,20 +3,85 @@ import builtins
 import socket
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Callable, Any
 from types import TracebackType
+from typing import Any
 
 _real_open = builtins.open
-_real_import = builtins.__import__
+
+
+ALLOWED_DUNDERS: frozenset[str] = frozenset(
+    {
+        "__init__",
+        "__len__",
+        "__str__",
+        "__repr__",
+        "__eq__",
+        "__iter__",
+        "__next__",
+        "__doc__",
+        "__name__",
+    }
+)
+
+FORBIDDEN_FRAME_ATTRS: frozenset[str] = frozenset(
+    {
+        "gi_frame",
+        "gi_code",
+        "f_back",
+        "f_locals",
+        "f_globals",
+        "f_builtins",
+        "f_code",
+        "tb_frame",
+        "cr_frame",
+    }
+)
+
+ALLOWED_BUILTINS: frozenset[str] = frozenset(
+    {
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "dict",
+        "enumerate",
+        "float",
+        "int",
+        "isinstance",
+        "issubclass",
+        "len",
+        "list",
+        "max",
+        "min",
+        "print",
+        "range",
+        "repr",
+        "set",
+        "str",
+        "sum",
+        "tuple",
+        "zip",
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "AttributeError",
+        "ZeroDivisionError",
+        "__build_class__",
+    }
+)
 
 
 class SecurityError(Exception):
     """Exception raised when code violates sandbox security policies."""
+
     pass
 
 
 class ImportSecurityValidator(ast.NodeVisitor):
     """AST visitor that validates imports against an allowlist."""
+
     RESTRICTED_CALLS = {"__import__", "eval", "exec", "compile"}
 
     def __init__(self, authorized_imports: list[str]) -> None:
@@ -29,8 +94,10 @@ class ImportSecurityValidator(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             if not self._is_module_allowed(alias.name):
-                raise SecurityError("Unauthorized import detected: "
-                                    f"'{alias.name}' (line {node.lineno})")
+                raise SecurityError(
+                    "Unauthorized import detected: "
+                    f"'{alias.name}' (line {node.lineno})"
+                )
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -43,32 +110,55 @@ class ImportSecurityValidator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         """Intercept dangerous direct calls to restricted functions."""
-        if (isinstance(node.func, ast.Name) and
-                node.func.id in self.RESTRICTED_CALLS):
-            raise SecurityError(f"Forbidden call to '{node.func.id}()' "
-                                f"detected (line {node.lineno})")
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in self.RESTRICTED_CALLS
+        ):
+            raise SecurityError(
+                f"Forbidden call to '{node.func.id}()' "
+                f"detected (line {node.lineno})"
+            )
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in FORBIDDEN_FRAME_ATTRS:
+            raise SecurityError(
+                f"Access to frame inspection attribute '{node.attr}' "
+                "is forbidden"
+            )
+        if (
+            node.attr.startswith("__") and node.attr.endswith("__")
+        ) and node.attr not in ALLOWED_DUNDERS:
+            raise SecurityError(
+                f"Access to restricted dunder attribute '{node.attr}' "
+                "is forbidden"
+            )
         self.generic_visit(node)
 
 
 class FileSystemGuard:
     """Enforces directory boundary constraints and safe file operations."""
+
     def __init__(self, allowed_directories: Sequence[str | Path]) -> None:
         self.allowed_directories = self._normalize_paths(allowed_directories)
 
     def _normalize_paths(
-            self, directories: Sequence[str | Path]) -> list[Path]:
+        self, directories: Sequence[str | Path]
+    ) -> list[Path]:
         """Convert input paths to canonical absolute Path instances."""
         return [Path(d).resolve() for d in directories]
 
     def validate_path(self, path: str | Path) -> Path:
         """Resolve and verify if a path falls strictly within
-         allowed boundaries."""
+        allowed boundaries."""
         target = Path(path).resolve()
         for allowed_dir in self.allowed_directories:
             if target.is_relative_to(allowed_dir):
                 return target
-        raise SecurityError(f"Access denied: '{path}' (resolved to '{target}')"
-                            " is outside allowed directories.")
+        raise SecurityError(
+            f"Access denied: '{path}' (resolved to '{target}')"
+            " is outside allowed directories."
+        )
 
     def open(self, file: str | Path, *args: Any, **kwargs: Any) -> Any:
         """Safely open a file after validating its target directory."""
@@ -79,36 +169,35 @@ class FileSystemGuard:
 class BuiltinsGuard:
     """Constructs a sanitized execution builtins dictionary."""
 
-    DEFAULT_RESTRICTED: set[str] = {
-        "eval",
-        "exec",
-        "compile",
-        "__import__",
-    }
-
-    def __init__(self, file_system_guard: FileSystemGuard,
-                 restricted_builtins: set[str] | None = None,
-                 authorized_imports: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        file_system_guard: FileSystemGuard,
+        authorized_imports: list[str] | None = None,
+    ) -> None:
         self.fs_guard = file_system_guard
         self.authorized_imports = authorized_imports or []
-        self.restricted = restricted_builtins or self.DEFAULT_RESTRICTED
 
-    def _safe_import(self, name: str, globals: Any = None, locals: Any = None,
-                     fromlist: tuple[str, ...] = (), level: int = 0) -> Any:
+    def _safe_import(
+        self,
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
         """Intercept runtime __import__ calls and validate against
         authorized imports."""
-        if level > 0:
-            raise SecurityError("Relative imports not allowed")
         if not is_module_allowed(name, self.authorized_imports):
-            raise SecurityError(f"Unauthorized import attempt: '{name}'")
-        return _real_import(name, globals, locals, fromlist, level)
+            raise SecurityError(f"Import of module '{name}' is forbidden")
+        return builtins.__import__(name, globals, locals, fromlist, level)
 
     def build_builtins(self) -> dict[str, Any]:
         """Generate a safe copy of builtins with
         restricted primitives removed."""
-        safe_builtins = builtins.__dict__.copy()
-        for restrict in self.restricted:
-            safe_builtins.pop(restrict, None)
+        safe_builtins: dict[str, Any] = {}
+        for name in ALLOWED_BUILTINS:
+            if hasattr(builtins, name):
+                safe_builtins[name] = getattr(builtins, name)
         safe_builtins["open"] = self.fs_guard.open
         safe_builtins["__import__"] = self._safe_import
         return safe_builtins
@@ -116,6 +205,7 @@ class BuiltinsGuard:
 
 class NetworkGuard:
     """Enforces network isolation by intercepting socket creation."""
+
     def __init__(self, allow_network: bool = False) -> None:
         self.allow_network = allow_network
         self._real_socket: Any | None = None
@@ -131,9 +221,12 @@ class NetworkGuard:
             setattr(socket, "socket", self._blocked_socket)
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None,
-                 exc_val: BaseException | None,
-                 exc_tb: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Restore original socket functionality."""
         if self._real_socket is not None:
             setattr(socket, "socket", self._real_socket)
@@ -147,13 +240,6 @@ def validate_code_security(code: str, authorized_imports: list[str]) -> None:
     validator.visit(tree)
 
 
-def create_safe_open(allowed_directories: list[str]) -> Callable[..., Any]:
-    """Create a restricted version of open() limited to allowed directories."""
-    def safe_open(file: str | Path, *args: Any, **kwargs: Any) -> Any:
-        pass
-    return safe_open
-
-
 def is_module_allowed(module_name: str, authorized_imports: list[str]) -> bool:
     """Check if a module name matches the authorized imports allowlist."""
     for pattern in authorized_imports:
@@ -161,7 +247,6 @@ def is_module_allowed(module_name: str, authorized_imports: list[str]) -> bool:
             return True
         if pattern.endswith(".*"):
             prefix = pattern[:-2]
-            if (prefix == module_name or
-                    module_name.startswith(f"{prefix}.")):
+            if prefix == module_name or module_name.startswith(f"{prefix}."):
                 return True
     return False
