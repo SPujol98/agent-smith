@@ -1,8 +1,9 @@
 """MCP server providing tools for MBPP task evaluation."""
+
 from __future__ import annotations
 
-
 from mcp.server.mcpserver import MCPServer
+
 from agent_smith.sandbox.runner import SandboxRunner
 from agent_smith.sandbox.security import SecurityError
 
@@ -11,8 +12,11 @@ mcp = MCPServer("mbpp-tools")
 
 
 @mcp.tool()
-def run_tests(candidate_code: str, test_list: list[str],
-              test_imports: list[str] | None = None) -> str:
+def run_tests(
+    candidate_code: str,
+    test_list: list[str],
+    test_imports: list[str] | None = None,
+) -> str:
     """Run validation test assertions against candidate Python code.
 
     Args:

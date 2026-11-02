@@ -7,10 +7,7 @@ def test_run_tests_assertion_success() -> None:
 def add(a, b):
     return a + b
 """
-    tests = [
-        "assert add(1, 2) == 3",
-        "assert add(-1, 1) == 0"
-    ]
+    tests = ["assert add(1, 2) == 3", "assert add(-1, 1) == 0"]
 
     # Act
     result = run_tests(code, tests)
@@ -26,10 +23,7 @@ def test_run_tests_assertion_failure() -> None:
 def add(a, b):
     return a - b
 """
-    tests = [
-        "assert add(1, 2) == 2",
-        "assert add(-1, 1) == 5"
-    ]
+    tests = ["assert add(1, 2) == 2", "assert add(-1, 1) == 5"]
 
     # Act
     result = run_tests(code, tests)
@@ -65,3 +59,27 @@ def test_run_tests_security_restriction() -> None:
 
     # Assert: Must catch SecurityError and return a descriptive text
     assert "securityerror" in result.lower() or "not allowed" in result.lower()
+
+
+def test_run_tests_accepts_solution_using_common_builtins() -> None:
+    """Ensure normal MBPP solutions (sorted, classes...) pass run_tests."""
+    # Arrange
+    code = """
+class Pair:
+    def __init__(self, a, b):
+        self.a, self.b = a, b
+
+
+def sort_desc(values):
+    return sorted(values, reverse=True)
+"""
+    tests = [
+        "assert sort_desc([1, 3, 2]) == [3, 2, 1]",
+        "assert Pair(1, 2).b == 2",
+    ]
+
+    # Act
+    result = run_tests(code, tests)
+
+    # Assert
+    assert result == "All tests passed successfully."

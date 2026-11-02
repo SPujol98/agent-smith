@@ -42,9 +42,20 @@ class SandboxRunner:
         )
 
     def run(self, code: str) -> ExecutionResult:
-        validate_code_security(code, self.authorized_imports)
+        try:
+            validate_code_security(code, self.authorized_imports)
+        except (SyntaxError, ValueError) as e:
+            return ExecutionResult(
+                success=False,
+                stdout="",
+                stderr="",
+                result_env={},
+                error="".join(traceback.format_exception_only(type(e), e)),
+            )
         execution_env: dict[str, Any] = {
-            "__builtins__": self.builtins_guard.build_builtins()
+            "__builtins__": self.builtins_guard.build_builtins(),
+            "__name__": self.builtins_guard.build_builtins(),
+            "__main__": self.builtins_guard.build_builtins(),
         }
 
         stdout_buf = io.StringIO()

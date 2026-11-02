@@ -1,13 +1,14 @@
 """Integration test suite for SandboxRunner orchestration."""
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
 import pytest
 
 from agent_smith.config import SandboxConfig
+from agent_smith.sandbox.result import ExecutionResult
 from agent_smith.sandbox.runner import SandboxRunner
 from agent_smith.sandbox.security import SecurityError
-from agent_smith.sandbox.result import ExecutionResult
 
 
 def test_runner_executes_safe_code() -> None:
@@ -46,9 +47,10 @@ def test_runner_blocks_unauthorized_imports() -> None:
 
 def test_runner_enforces_filesystem_sandbox() -> None:
     # Arrange
-    with (tempfile.TemporaryDirectory() as allowed_dir,
-          tempfile.TemporaryDirectory() as forbidden_dir):
-
+    with (
+        tempfile.TemporaryDirectory() as allowed_dir,
+        tempfile.TemporaryDirectory() as forbidden_dir,
+    ):
         runner = SandboxRunner(allowed_directories=[Path(allowed_dir)])
         target_path = Path(forbidden_dir) / "hack.txt"
 
@@ -74,7 +76,7 @@ with open(r'{target_path}', 'w') as vault:
 
         # Assert
         assert target_path.exists()
-        assert target_path.read_text() == 'valid output'
+        assert target_path.read_text() == "valid output"
 
 
 def test_runner_blocks_network_access() -> None:
@@ -140,5 +142,61 @@ while True:
     # Assert
     assert result.success is False
     assert result.error is not None
-    assert ("timed out" in result.error.lower()
-            or "timeout" in result.error.lower())
+    assert (
+        "timed out" in result.error.lower()
+        or "timeout" in result.error.lower()
+    )
+
+
+def test_runner_supports_common_python_code() -> None:
+    """Ensure typical LLM-generated code runs with the builtins allowlist.
+
+    Purpose:
+        Classes, inheritance with super(), common builtins and builtin
+        exceptions must be available inside the sandbox.
+    """
+    # Arrange
+    runner = SandboxRunner(authorized_imports=[])
+    code = """
+class Base:
+    def __init__(self, values):
+        self.values = values
+
+
+class Sorter(Base):
+    def __init__(self, values):
+        super().__init__(values)
+
+    def result(self):
+        return sorted(map(abs, self.values))
+
+
+try:
+    assert Sorter([3, -1, 2]).result() == [1, 2, 3]
+    raise AssertionError("expected")
+except AssertionError as e:
+    print(e)
+"""
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.stdout == "expected\n"
+
+
+def test_runner_returns_syntax_error_as_result() -> None:
+    """Ensure syntax errors are reported to the LLM instead of raised."""
+    # Arrange
+    runner = SandboxRunner()
+
+    # Act
+    result = runner.run("def f(:\n    pass")
+
+    # Assert
+    assert result.success is False
+    assert result.stdout == ""
+    assert result.error is not None
+    assert "SyntaxError" in result.error
+    assert "^" in result.error

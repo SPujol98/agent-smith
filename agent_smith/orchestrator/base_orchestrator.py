@@ -1,28 +1,28 @@
 # Generic Agent Loop (Thought -> Code -> Observation)
-import time
-import os
 import json
+import os
 import re
-from openai import OpenAI
-from datetime import datetime
+import time
 from abc import ABC
-from typing import List, Dict, Any, Optional, str
-from sandbox.runner import SandboxRunner
-from sandbox.result import ExecutionResult
+from datetime import datetime
+from typing import Any, Dict, List, Optional, str
+
 from models import SolutionOutput, StepMetrics
+from openai import OpenAI
+from sandbox.result import ExecutionResult
+from sandbox.runner import SandboxRunner
 
 
 class BaseOrchestrator(ABC):
-
     def __init__(
-            self,
-            model_name: str,
-            system_prompt: str,
-            benchmark: str,
-            max_iterations: int = 10,
-            providers_config: Optional[List[Dict[str, Any]]] = None,
-            default_provider_url: Optional[str] = None,
-            api_keys: Optional[List[str]] = None,
+        self,
+        model_name: str,
+        system_prompt: str,
+        benchmark: str,
+        max_iterations: int = 10,
+        providers_config: Optional[List[Dict[str, Any]]] = None,
+        default_provider_url: Optional[str] = None,
+        api_keys: Optional[List[str]] = None,
     ):
         self.model_name = model_name
         self.provider_url = default_provider_url
@@ -32,12 +32,16 @@ class BaseOrchestrator(ABC):
         if providers_config:
             self.providers = providers_config
         else:
-            self.providers = [{
-                "url": default_provider_url,
-                "keys": (api_keys if
-                         api_keys
-                         else [os.getenv("OPENAI_API_KEY", "dummy-key")])
-            }]
+            self.providers = [
+                {
+                    "url": default_provider_url,
+                    "keys": (
+                        api_keys
+                        if api_keys
+                        else [os.getenv("OPENAI_API_KEY", "dummy-key")]
+                    ),
+                }
+            ]
         self._current_provider_index = 0
         self._current_key_index = 0
         self.sandbox_runner = SandboxRunner()
@@ -52,11 +56,10 @@ class BaseOrchestrator(ABC):
         current_key = keys[self._current_key_index % len(keys)]
 
         return OpenAI(
-            base_url=current_url if current_url else None,
-            api_key=current_key
+            base_url=current_url if current_url else None, api_key=current_key
         )
 
-    def _rotate_key_or_provider(self):
+    def _rotate_key_or_provider(self) -> None:
         """
         Rotation and Fallback Strategy:
         1. Attempt to rotate to the next token from the current provider.
@@ -72,13 +75,17 @@ class BaseOrchestrator(ABC):
             self._current_key_index = 0
             old_prov_idx = self._current_provider_index
             self._current_provider_index = (
-                (self._current_provider_index + 1) % len(self.providers)
+                self._current_provider_index + 1
+            ) % len(self.providers)
+            print(
+                "[Provider Fallback] Switching index providers"
+                f" {old_prov_idx} to {self._current_provider_index}"
             )
-            print("[Provider Fallback] Switching index providers"
-                  f" {old_prov_idx} to {self._current_provider_index}")
         else:
-            print("[Token Rotation] Rotating to the next API key "
-                  "from the current provider.")
+            print(
+                "[Token Rotation] Rotating to the next API key "
+                "from the current provider."
+            )
 
     def _call_llm(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
         """
@@ -124,12 +131,14 @@ class BaseOrchestrator(ABC):
                 attempts += 1
                 print(
                     "[Warning] LLM error "
-                    f"(Attempt {attempts}/{max_attempts}): {e}")
+                    f"(Attempt {attempts}/{max_attempts}): {e}"
+                )
                 self._rotate_key_or_provider()
                 if attempts >= max_attempts:
                     raise RuntimeError(
                         "Total failure: All available tokens and providers "
-                        f"have been exhausted: {str(e)}")
+                        f"have been exhausted: {str(e)}"
+                    )
                 time.sleep(backoff_factor ** (attempts % 3))
 
     def _extract_code(self, llm_output: str) -> str:
@@ -152,16 +161,12 @@ class BaseOrchestrator(ABC):
                 data = json.loads(tc_match.group(1))
                 name = data.get("name")
                 args = data.get("arguments", {})
-                args_str = ", ".join(
-                    f"{k}={v!r}" for k, v in args.items()
-                )
+                args_str = ", ".join(f"{k}={v!r}" for k, v in args.items())
                 return f"result = {name}({args_str})\nprint(result)"
             except Exception:
                 pass
 
-        invoke_pattern = (
-            r'<invoke\s+name=["\'](.*?)["\']>(.*?)</invoke>'
-        )
+        invoke_pattern = r'<invoke\s+name=["\'](.*?)["\']>(.*?)</invoke>'
         inv_match = re.search(invoke_pattern, llm_output, re.DOTALL)
         if inv_match:
             func_name = inv_match.group(1)
@@ -180,16 +185,16 @@ class BaseOrchestrator(ABC):
         return llm_output.strip()
 
     def run(
-            self,
-            task_id: str,
-            initial_task_prompt: str,
-            step_metrics_class: StepMetrics,
-            solution_output_class: SolutionOutput
+        self,
+        task_id: str,
+        initial_task_prompt: str,
+        step_metrics_class: StepMetrics,
+        solution_output_class: SolutionOutput,
     ) -> SolutionOutput:
 
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": initial_task_prompt}
+            {"role": "user", "content": initial_task_prompt},
         ]
 
         steps = []
@@ -204,7 +209,6 @@ class BaseOrchestrator(ABC):
 
         for iteration in range(1, self.max_iterations + 1):
             try:
-
                 llm_response = self._call_llm(messages)
                 total_requests += 1
 
@@ -231,7 +235,7 @@ class BaseOrchestrator(ABC):
                     llm_output=raw_output,
                     sandbox_input=code_to_run,
                     sandbox_output=execution_result.output,
-                    retries=retries_count
+                    retries=retries_count,
                 )
                 steps.append(step_metric)
 
@@ -241,12 +245,14 @@ class BaseOrchestrator(ABC):
                     break
 
                 messages.append({"role": "assistant", "content": raw_output})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"Observation from sandbox:\n{execution_result.output}"
-                    )
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Observation from sandbox:\n{execution_result.output}"
+                        ),
+                    }
+                )
 
             except Exception as e:
                 error_message = str(e)
@@ -267,5 +273,5 @@ class BaseOrchestrator(ABC):
             steps=steps,
             system_prompt=self.system_prompt,
             error=error_message,
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now().isoformat(),
         )

@@ -7,6 +7,7 @@ from types import TracebackType
 from typing import Any
 
 _real_open = builtins.open
+_real_import = builtins.__import__
 
 
 ALLOWED_DUNDERS: frozenset[str] = frozenset(
@@ -37,39 +38,83 @@ FORBIDDEN_FRAME_ATTRS: frozenset[str] = frozenset(
     }
 )
 
-ALLOWED_BUILTINS: frozenset[str] = frozenset(
+
+_TYPES: frozenset[str] = frozenset(
     {
-        "abs",
-        "all",
-        "any",
-        "bool",
-        "dict",
-        "enumerate",
-        "float",
         "int",
-        "isinstance",
-        "issubclass",
-        "len",
+        "float",
+        "bool",
+        "str",
         "list",
-        "max",
-        "min",
+        "dict",
+        "object",
+        "type",
+        "set",
+        "tuple",
+        "bytes",
+        "bytearray",
+        "complex",
+        "frozenset",
+        "slice",
+    }
+)
+
+_OOP: frozenset[str] = frozenset(
+    {
+        "super",
+        "property",
+        "staticmethod",
+        "classmethod",
+    }
+)
+
+_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        "len",
+        "sorted",
+        "map",
+        "round",
+        "chr",
+        "ord",
+        "sum",
         "print",
         "range",
+        "min",
+        "max",
+        "abs",
+        "all",
+        "enumerate",
+        "isinstance",
+        "issubclass",
         "repr",
-        "set",
-        "str",
-        "sum",
-        "tuple",
         "zip",
-        "Exception",
-        "ValueError",
-        "TypeError",
-        "KeyError",
-        "IndexError",
-        "AttributeError",
-        "ZeroDivisionError",
-        "__build_class__",
+        "any",
+        "filter",
+        "reversed",
+        "divmod",
+        "pow",
+        "bin",
+        "hex",
+        "oct",
+        "hash",
+        "id",
+        "iter",
+        "next",
+        "callable",
+        "format",
+        "ascii",
+        "hasattr",
+        "dir",
     }
+)
+
+_CONSTANTS: frozenset[str] = frozenset({"Ellipsis", "NotImplemented"})
+
+_INTERNALS: frozenset[str] = frozenset({"__build_class__"})
+
+
+ALLOWED_BUILTINS: frozenset[str] = (
+    _TYPES | _OOP | _FUNCTIONS | _CONSTANTS | _INTERNALS
 )
 
 
@@ -167,7 +212,7 @@ class FileSystemGuard:
 
 
 class BuiltinsGuard:
-    """Constructs a sanitized execution builtins dictionary."""
+    """Constructs the sandbox builtins dictionary (allowlist approach)."""
 
     def __init__(
         self,
@@ -187,17 +232,25 @@ class BuiltinsGuard:
     ) -> Any:
         """Intercept runtime __import__ calls and validate against
         authorized imports."""
+        if level > 0:
+            raise SecurityError("Relative imports not allowed")
         if not is_module_allowed(name, self.authorized_imports):
             raise SecurityError(f"Import of module '{name}' is forbidden")
-        return builtins.__import__(name, globals, locals, fromlist, level)
+        return _real_import(name, globals, locals, fromlist, level)
 
     def build_builtins(self) -> dict[str, Any]:
-        """Generate a safe copy of builtins with
-        restricted primitives removed."""
+        """Build the sandbox builtins from the allowlist.
+
+        Starts from an empty dict and adds only ALLOWED_BUILTINS, every
+        builtin exception class, and the guarded open and __import__.
+        """
         safe_builtins: dict[str, Any] = {}
         for name in ALLOWED_BUILTINS:
             if hasattr(builtins, name):
                 safe_builtins[name] = getattr(builtins, name)
+        for name, obj in vars(builtins).items():
+            if isinstance(obj, type) and issubclass(obj, BaseException):
+                safe_builtins[name] = obj
         safe_builtins["open"] = self.fs_guard.open
         safe_builtins["__import__"] = self._safe_import
         return safe_builtins

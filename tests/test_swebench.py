@@ -139,8 +139,8 @@ def test_search_code_success(
     result = search_code(pattern="ping", file_pattern="*.py")
 
     # Assert: verify grep -n style output
-    assert "foo.py: 1 def ping():" in result
-    assert "bar.py: 2     ping()" in result
+    assert "foo.py:1 def ping():" in result
+    assert "bar.py:2     ping()" in result
 
 
 def test_search_code_no_matches(
@@ -177,8 +177,8 @@ def test_search_definition_success(
     func_result = search_function_or_class_definition_in_code("format_user")
 
     # Assert: Verifica que la ruta absoluta esté presente y coincida
-    assert f"{models_file.resolve()}: 1 class User:" in class_result
-    assert f"{utils_file.resolve()}: 1 def format_user(user):" in func_result
+    assert f"{models_file.resolve()}:1 class User:" in class_result
+    assert f"{utils_file.resolve()}:1 def format_user(user):" in func_result
 
 
 def test_search_definition_no_matches(
@@ -210,9 +210,9 @@ def test_find_references_success(
 
     result = find_references(name="Token", filepath="models.py", line=1)
 
-    assert f"{models_file.resolve()}: 1 class Token:" in result
-    assert f"{auth_file.resolve()}: 1 from models import Token" in result
-    assert f"{auth_file.resolve()}: 4     return Token()" in result
+    assert f"{models_file.resolve()}:1 class Token:" in result
+    assert f"{auth_file.resolve()}:1 from models import Token" in result
+    assert f"{auth_file.resolve()}:4     return Token()" in result
 
 
 def test_find_references_no_matches(
@@ -398,3 +398,39 @@ def test_run_command_unauthorized_workdir(
         or "access denied" in result.lower()
         or "unauthorized" in result.lower()
     )
+
+
+def test_search_code_no_matches_message_is_not_duplicated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "foo.py").write_text("x = 1\n", encoding="utf-8")
+
+    # Act
+    result = search_code(pattern="zzz", file_pattern="*.py")
+
+    # Assert
+    assert result == "No matches found for pattern 'zzz'"
+
+
+def test_search_code_rejects_root_outside_allowed_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Arrange
+    allowed = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    allowed.mkdir()
+    outside.mkdir()
+    (outside / "secret.py").write_text("password = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "mcp_tools_swebench.ALLOWED_DIRECTORIES", [str(allowed)]
+    )
+    monkeypatch.chdir(outside)
+
+    # Act
+    result = search_code(pattern="password", file_pattern="*.py")
+
+    # Assert
+    assert result.startswith("Error")
+    assert "password = 1" not in result

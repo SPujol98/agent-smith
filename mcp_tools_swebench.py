@@ -55,12 +55,12 @@ def _search_workspace(
                     if match_predicate(line):
                         clean_line = line.rstrip("\r\n")
                         matches.append(
-                            f"{file_path.resolve()}: {line_num} {clean_line}"
+                            f"{file_path.resolve()}:{line_num} {clean_line}"
                         )
         except OSError:
             continue
     if not matches:
-        return f"No matches found for pattern '{no_matches_msg}'"
+        return no_matches_msg
     return "\n".join(matches)
 
 

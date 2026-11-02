@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+
 from agent_smith.config import SandboxConfig
 
 DEFAULT_TEMPLATE = Path("sandbox_template.json")

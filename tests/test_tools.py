@@ -1,5 +1,7 @@
 """Tests for agent tools and registry."""
+
 import pytest
+
 from agent_smith.tools.base import BaseTool, ToolError
 from agent_smith.tools.registry import ToolRegistry
 

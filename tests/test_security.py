@@ -8,6 +8,7 @@ This module validates that the sandbox enforces strict isolation across:
 state restoration).
 """
 
+import builtins
 import socket
 import tempfile
 from pathlib import Path
@@ -274,3 +275,49 @@ class Counter:
     # Act & Assert
     # If no SecurityError is raised, standard OOP dunders passed successfully
     validate_code_security(legitimate_code, authorized_imports)
+
+
+def test_safe_import_blocks_relative_imports_at_runtime() -> None:
+    """Ensure the runtime __import__ rejects relative imports.
+
+    Purpose:
+        Call the guarded __import__ directly, without the AST validator, to
+        check the runtime barrier on its own.
+    """
+    # Arrange
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        guard = BuiltinsGuard(
+            file_system_guard=FileSystemGuard([tmp_dir]),
+            authorized_imports=["math"],
+        )
+        safe_import = guard.build_builtins()["__import__"]
+
+        # Act & Assert
+        assert safe_import("math").sqrt(4) == 2.0
+        with pytest.raises(SecurityError):
+            safe_import("math", level=1)
+        with pytest.raises(SecurityError):
+            safe_import("os")
+
+
+def test_builtins_guard_includes_all_builtin_exceptions() -> None:
+    """Ensure every builtin exception class is available in the sandbox."""
+    # Arrange
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        guard = BuiltinsGuard(file_system_guard=FileSystemGuard([tmp_dir]))
+
+        # Act
+        safe_builtins = guard.build_builtins()
+
+        # Assert
+        for name in (
+            "AssertionError",
+            "StopIteration",
+            "RuntimeError",
+            "NotImplementedError",
+            "SystemExit",
+            "KeyboardInterrupt",
+        ):
+            assert name in safe_builtins
+        assert "sorted" in safe_builtins
+        assert safe_builtins["open"] is not builtins.open
