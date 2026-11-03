@@ -17,7 +17,6 @@ from agent_smith.sandbox.security import (
     SecurityError,
     validate_code_security,
 )
-from agent_smith.sandbox.timeout import TimeoutGuard
 
 _MP_CONTEXT = multiprocessing.get_context("fork")
 
@@ -64,9 +63,21 @@ class SandboxRunner:
         )
         process.start()
         child_conn.close()
+        timeout = self.config.max_execution_time_seconds
         try:
+            if not parent_conn.poll(timeout if timeout > 0 else None):
+                return ExecutionResult(
+                    success=False,
+                    stdout="",
+                    stderr="",
+                    result_env={},
+                    error=("TimeoutError: Execution timed out after "
+                           f"{timeout} seconds"),
+                )
             message = parent_conn.recv()
         finally:
+            if process.is_alive():
+                process.kill()
             process.join()
             parent_conn.close()
         if message[0] == "raise":
@@ -91,20 +102,10 @@ class SandboxRunner:
                 redirect_stdout(stdout_buf),
                 redirect_stderr(stderr_buf),
                 NetworkGuard(),
-                TimeoutGuard(self.config.max_execution_time_seconds),
             ):
                 message: tuple[Any, ...]
                 try:
                     exec(code, execution_env)
-                except TimeoutError as e:
-                    message = (
-                        "done",
-                        False,
-                        stdout_buf.getvalue(),
-                        stderr_buf.getvalue(),
-                        _picklable_items(execution_env),
-                        f"{type(e).__name__}: {e}",
-                    )
                 except (SecurityError, PermissionError) as e:
                     message = ("raise", e)
                 except Exception:

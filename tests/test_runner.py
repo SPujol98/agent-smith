@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -239,3 +240,54 @@ after = 1
     assert "after" not in result.result_env
     assert "math" not in result.result_env
     assert "helper" not in result.result_env
+
+
+def _run_with_deadline(
+    runner: SandboxRunner, code: str, deadline: float = 10
+) -> ExecutionResult | None:
+    """Run code in a worker thread; return None if it is still running
+    after the deadline (so a broken timeout fails the test, not hangs it)."""
+    results: list[ExecutionResult] = []
+    worker = threading.Thread(
+        target=lambda: results.append(runner.run(code)), daemon=True
+    )
+    worker.start()
+    worker.join(timeout=deadline)
+    return results[0] if results else None
+
+
+def test_runner_timeout_cannot_be_caught_by_user_code() -> None:
+    """Ensure user code cannot catch the timeout and keep running."""
+    # Arrange
+    runner = SandboxRunner(config=SandboxConfig(max_execution_time_seconds=1))
+    code = """
+while True:
+    try:
+        while True:
+            pass
+    except BaseException:
+        pass
+"""
+
+    # Act
+    result = _run_with_deadline(runner, code)
+
+    # Assert
+    assert result is not None, "timeout was caught: code kept running"
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("TimeoutError")
+
+
+def test_runner_timeout_works_outside_main_thread() -> None:
+    """Ensure the timeout does not rely on signals (main thread only)."""
+    # Arrange
+    runner = SandboxRunner(config=SandboxConfig(max_execution_time_seconds=1))
+
+    # Act
+    result = _run_with_deadline(runner, "while True:\n    pass")
+
+    # Assert
+    assert result is not None
+    assert result.error is not None
+    assert result.error.startswith("TimeoutError")
