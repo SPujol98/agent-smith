@@ -1,7 +1,10 @@
 import io
+import multiprocessing
+import pickle
 import traceback
 from collections.abc import Sequence
 from contextlib import redirect_stderr, redirect_stdout
+from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +18,8 @@ from agent_smith.sandbox.security import (
     validate_code_security,
 )
 from agent_smith.sandbox.timeout import TimeoutGuard
+
+_MP_CONTEXT = multiprocessing.get_context("fork")
 
 
 class SandboxRunner:
@@ -52,43 +57,89 @@ class SandboxRunner:
                 result_env={},
                 error="".join(traceback.format_exception_only(type(e), e)),
             )
+
+        parent_conn, child_conn = _MP_CONTEXT.Pipe()
+        process = _MP_CONTEXT.Process(
+            target=self._child_main, args=(child_conn, code), daemon=True
+        )
+        process.start()
+        child_conn.close()
+        try:
+            message = parent_conn.recv()
+        finally:
+            process.join()
+            parent_conn.close()
+        if message[0] == "raise":
+            raise message[1]
+        return ExecutionResult(
+            success=message[1],
+            stdout=message[2],
+            stderr=message[3],
+            result_env=message[4],
+            error=message[5],
+        )
+
+    def _child_main(self, conn: Connection, code: str) -> None:
         execution_env: dict[str, Any] = {
             "__builtins__": self.builtins_guard.build_builtins(),
-            "__name__": self.builtins_guard.build_builtins(),
-            "__main__": self.builtins_guard.build_builtins(),
+            "__name__": "__main__",
         }
+        try:
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with (
+                redirect_stdout(stdout_buf),
+                redirect_stderr(stderr_buf),
+                NetworkGuard(),
+                TimeoutGuard(self.config.max_execution_time_seconds),
+            ):
+                message: tuple[Any, ...]
+                try:
+                    exec(code, execution_env)
+                except TimeoutError as e:
+                    message = (
+                        "done",
+                        False,
+                        stdout_buf.getvalue(),
+                        stderr_buf.getvalue(),
+                        _picklable_items(execution_env),
+                        f"{type(e).__name__}: {e}",
+                    )
+                except (SecurityError, PermissionError) as e:
+                    message = ("raise", e)
+                except Exception:
+                    message = (
+                        "done",
+                        False,
+                        stdout_buf.getvalue(),
+                        stderr_buf.getvalue(),
+                        _picklable_items(execution_env),
+                        traceback.format_exc(),
+                    )
+                else:
+                    message = (
+                        "done",
+                        True,
+                        stdout_buf.getvalue(),
+                        stderr_buf.getvalue(),
+                        _picklable_items(execution_env),
+                        None,
+                    )
+            conn.send(message)
+        finally:
+            conn.close()
 
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
 
-        success = True
-        error_msg: str | None = None
-        with (
-            redirect_stdout(stdout_buf),
-            redirect_stderr(stderr_buf),
-            NetworkGuard(),
-            TimeoutGuard(self.config.max_execution_time_seconds),
-        ):
-            try:
-                exec(code, execution_env)
-            except TimeoutError as e:
-                return ExecutionResult(
-                    success=False,
-                    stdout=stdout_buf.getvalue(),
-                    stderr=stderr_buf.getvalue(),
-                    result_env=execution_env,
-                    error=f"{type(e).__name__}: {e}",
-                )
-            except (SecurityError, PermissionError):
-                raise
-            except Exception:
-                success = False
-                error_msg = traceback.format_exc()
-
-        return ExecutionResult(
-            success=success,
-            stdout=stdout_buf.getvalue(),
-            stderr=stderr_buf.getvalue(),
-            result_env=execution_env,
-            error=error_msg,
-        )
+def _picklable_items(execution_env: dict[str, Any]) -> dict[str, Any]:
+    """Return the namespace values that can be sent to the parent process
+    (modules and functions defined by the code are dropped)"""
+    pick_items: dict[str, Any] = {}
+    for name, obj in execution_env.items():
+        if name == "__builtins__":
+            continue
+        try:
+            pickle.dumps(obj)
+            pick_items[name] = obj
+        except Exception:
+            continue
+    return pick_items

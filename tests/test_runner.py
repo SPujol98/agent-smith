@@ -1,5 +1,6 @@
 """Integration test suite for SandboxRunner orchestration."""
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -200,3 +201,41 @@ def test_runner_returns_syntax_error_as_result() -> None:
     assert result.error is not None
     assert "SyntaxError" in result.error
     assert "^" in result.error
+
+
+def test_runner_executes_code_in_child_process() -> None:
+    """Ensure the code runs in a separate process, not in the agent's."""
+    # Arrange
+    runner = SandboxRunner(authorized_imports=["os"])
+
+    # Act
+    result = runner.run("import os\nchild_pid = os.getpid()")
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.result_env["child_pid"] != os.getpid()
+
+
+def test_runner_returns_namespace_after_runtime_error() -> None:
+    """Ensure variables created before an error reach the parent, and
+    values that cannot be pickled are dropped."""
+    # Arrange
+    runner = SandboxRunner(authorized_imports=["math"])
+    code = """
+import math
+def helper():
+    return 1
+before = 42
+1 / 0
+after = 1
+"""
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is False
+    assert result.result_env["before"] == 42
+    assert "after" not in result.result_env
+    assert "math" not in result.result_env
+    assert "helper" not in result.result_env
