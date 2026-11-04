@@ -319,3 +319,48 @@ while True:
     assert result.error is not None
     assert result.error.startswith("TimeoutError")
     assert "partial" in result.error
+
+
+def test_runner_enforces_memory_limit() -> None:
+    """Ensure code cannot allocate more than max_memory_mb."""
+    # Arrange
+    runner = SandboxRunner(config=SandboxConfig(max_memory_mb=50))
+    code = "data = bytearray(200 * 1024 * 1024)"
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("MemoryError")
+
+
+def test_runner_memory_limit_allows_normal_allocations() -> None:
+    """Ensure the limit leaves room for allocations below max_memory_mb."""
+    # Arrange
+    runner = SandboxRunner(config=SandboxConfig(max_memory_mb=50))
+    code = "data = bytearray(10 * 1024 * 1024)\nsize = len(data)"
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.result_env["size"] == 10 * 1024 * 1024
+
+
+def test_runner_reports_child_that_dies_without_result() -> None:
+    """Ensure a child that exits without sending a result is reported."""
+    # Arrange
+    runner = SandboxRunner(authorized_imports=["os"])
+
+    # Act
+    result = runner.run("import os\nprint('bye')\nos._exit(3)")
+
+    # Assert
+    assert result.success is False
+    assert result.stdout == "bye\n"
+    assert result.error is not None
+    assert "terminated unexpectedly" in result.error
+    assert "exit code 3" in result.error

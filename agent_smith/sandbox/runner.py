@@ -1,6 +1,8 @@
 import io
 import multiprocessing
+import os
 import pickle
+import resource
 import time
 import traceback
 from collections.abc import Sequence
@@ -20,6 +22,7 @@ from agent_smith.sandbox.security import (
 )
 
 _MP_CONTEXT = multiprocessing.get_context("fork")
+_MB = 1024 * 1024
 
 
 class _PipeWriter(io.TextIOBase):
@@ -52,6 +55,22 @@ def _picklable_items(execution_env: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             continue
     return pick_items
+
+
+def _current_address_space() -> int:
+    return 0
+
+
+def _apply_memory_limit(max_memory_mb: int) -> None:
+    """Let the code allocate at most max_memory_mb on top of what the forked 
+    child already uses."""
+    if max_memory_mb <= 0:
+        return
+    limit = _current_address_space() + max_memory_mb * _MB
+    _, hard = resource.getrlimit(resource.RLIMIT_AS)
+    if hard != resource.RLIM_INFINITY:
+        limit = min(limit, hard)
+    resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
 
 
 class SandboxRunner:
