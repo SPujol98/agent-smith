@@ -291,3 +291,31 @@ def test_runner_timeout_works_outside_main_thread() -> None:
     assert result is not None
     assert result.error is not None
     assert result.error.startswith("TimeoutError")
+
+
+def test_runner_keeps_partial_output_on_timeout() -> None:
+    """Ensure output printed before a timeout reaches the LLM."""
+    # Arrange
+    runner = SandboxRunner(
+        authorized_imports=["sys"],
+        config=SandboxConfig(max_execution_time_seconds=1),
+    )
+    code = """
+import sys
+print("before the loop")
+print("warning", file=sys.stderr)
+while True:
+    pass
+"""
+
+    # Act
+    result = _run_with_deadline(runner, code)
+
+    # Assert
+    assert result is not None
+    assert result.success is False
+    assert result.stdout == "before the loop\n"
+    assert result.stderr == "warning\n"
+    assert result.error is not None
+    assert result.error.startswith("TimeoutError")
+    assert "partial" in result.error

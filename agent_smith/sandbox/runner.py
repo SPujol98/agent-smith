@@ -1,12 +1,13 @@
 import io
 import multiprocessing
 import pickle
+import time
 import traceback
 from collections.abc import Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO, cast
 
 from agent_smith.config import SandboxConfig
 from agent_smith.sandbox.result import ExecutionResult
@@ -19,6 +20,38 @@ from agent_smith.sandbox.security import (
 )
 
 _MP_CONTEXT = multiprocessing.get_context("fork")
+
+
+class _PipeWriter(io.TextIOBase):
+    """File-like object that sends every write to the parent process."""
+
+    def __init__(self, conn: Connection, channel: str) -> None:
+        super().__init__()
+        self._conn = conn
+        self._channel = channel
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        if text:
+            self._conn.send((self._channel, text))
+        return len(text)
+
+
+def _picklable_items(execution_env: dict[str, Any]) -> dict[str, Any]:
+    """Return the namespace values that can be sent to the parent process
+    (modules and functions defined by the code are dropped)"""
+    pick_items: dict[str, Any] = {}
+    for name, obj in execution_env.items():
+        if name == "__builtins__":
+            continue
+        try:
+            pickle.dumps(obj)
+            pick_items[name] = obj
+        except Exception:
+            continue
+    return pick_items
 
 
 class SandboxRunner:
@@ -64,31 +97,48 @@ class SandboxRunner:
         process.start()
         child_conn.close()
         timeout = self.config.max_execution_time_seconds
+        deadline = time.monotonic() + timeout if timeout > 0 else None
+        stdout: list[str] = []
+        stderr: list[str] = []
         try:
-            if not parent_conn.poll(timeout if timeout > 0 else None):
-                return ExecutionResult(
-                    success=False,
-                    stdout="",
-                    stderr="",
-                    result_env={},
-                    error=("TimeoutError: Execution timed out after "
-                           f"{timeout} seconds"),
+            while True:
+                remaining = (
+                    None
+                    if deadline is None
+                    else max(0.0, deadline - time.monotonic())
                 )
-            message = parent_conn.recv()
+                if not parent_conn.poll(remaining):
+                    return ExecutionResult(
+                        success=False,
+                        stdout="".join(stdout),
+                        stderr="".join(stderr),
+                        result_env={},
+                        error=(
+                            "TimeoutError: Execution timed out after "
+                            f"{timeout} seconds (output may be partial)"
+                        ),
+                    )
+                message = parent_conn.recv()
+                if message[0] == "stdout":
+                    stdout.append(message[1])
+                elif message[0] == "stderr":
+                    stderr.append(message[1])
+                elif message[0] == "raise":
+                    raise message[1]
+                else:
+                    _, success, env, error = message
+                    return ExecutionResult(
+                        success=success,
+                        stdout="".join(stdout),
+                        stderr="".join(stderr),
+                        result_env=env,
+                        error=error,
+                    )
         finally:
             if process.is_alive():
                 process.kill()
             process.join()
             parent_conn.close()
-        if message[0] == "raise":
-            raise message[1]
-        return ExecutionResult(
-            success=message[1],
-            stdout=message[2],
-            stderr=message[3],
-            result_env=message[4],
-            error=message[5],
-        )
 
     def _child_main(self, conn: Connection, code: str) -> None:
         execution_env: dict[str, Any] = {
@@ -96,11 +146,9 @@ class SandboxRunner:
             "__name__": "__main__",
         }
         try:
-            stdout_buf = io.StringIO()
-            stderr_buf = io.StringIO()
             with (
-                redirect_stdout(stdout_buf),
-                redirect_stderr(stderr_buf),
+                redirect_stdout(cast(TextIO, _PipeWriter(conn, "stdout"))),
+                redirect_stderr(cast(TextIO, _PipeWriter(conn, "stderr"))),
                 NetworkGuard(),
             ):
                 message: tuple[Any, ...]
@@ -112,8 +160,6 @@ class SandboxRunner:
                     message = (
                         "done",
                         False,
-                        stdout_buf.getvalue(),
-                        stderr_buf.getvalue(),
                         _picklable_items(execution_env),
                         traceback.format_exc(),
                     )
@@ -121,26 +167,9 @@ class SandboxRunner:
                     message = (
                         "done",
                         True,
-                        stdout_buf.getvalue(),
-                        stderr_buf.getvalue(),
                         _picklable_items(execution_env),
                         None,
                     )
             conn.send(message)
         finally:
             conn.close()
-
-
-def _picklable_items(execution_env: dict[str, Any]) -> dict[str, Any]:
-    """Return the namespace values that can be sent to the parent process
-    (modules and functions defined by the code are dropped)"""
-    pick_items: dict[str, Any] = {}
-    for name, obj in execution_env.items():
-        if name == "__builtins__":
-            continue
-        try:
-            pickle.dumps(obj)
-            pick_items[name] = obj
-        except Exception:
-            continue
-    return pick_items
