@@ -6,10 +6,10 @@ import re
 from openai import OpenAI
 from datetime import datetime
 from abc import ABC
-from typing import List, Dict, Any, Optional, str
-from sandbox.runner import SandboxRunner
-from sandbox.result import ExecutionResult
-from models import SolutionOutput, StepMetrics
+from typing import List, Dict, Any, Optional
+from agent_smith.sandbox.runner import SandboxRunner
+from agent_smith.sandbox.result import ExecutionResult
+from agent_smith.orchestrator.models import SolutionOutput, StepMetrics
 
 
 class BaseOrchestrator(ABC):
@@ -218,8 +218,18 @@ class BaseOrchestrator(ABC):
                 code_to_run = self._extract_code(raw_output)
 
                 execution_result: ExecutionResult = (
-                    self.sandbox_runner.execute(code_to_run)
+                    self.sandbox_runner.run(code_to_run)
                 )
+
+                sandbox_output_combined = (
+                    f"Stdout:\n{execution_result.stdout}\n"
+                    f"Stderr:\n{execution_result.stderr}"
+                )
+
+                if execution_result.error:
+                    sandbox_output_combined += (
+                        f"\nError:\n{execution_result.error}"
+                    )
 
                 step_metric = step_metrics_class(
                     step=iteration,
@@ -230,11 +240,11 @@ class BaseOrchestrator(ABC):
                     model_name=self.model_name,
                     llm_output=raw_output,
                     sandbox_input=code_to_run,
-                    sandbox_output=execution_result.output,
+                    sandbox_output=sandbox_output_combined,
                     retries=retries_count
                 )
                 steps.append(step_metric)
-
+# pendiente finer_answer de sergio para terminar de configurar la salida
                 if execution_result.is_finished:
                     success = True
                     final_solution = execution_result.final_answer_value
