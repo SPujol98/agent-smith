@@ -1,4 +1,4 @@
-# Evaluation logging structure
+# Evaluation logging structure - internal audit report
 # Evaluation of AI agents: traceability (auditing), reproducibility,
 # and isolation of the execution environment.
 

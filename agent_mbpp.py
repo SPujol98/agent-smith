@@ -5,6 +5,9 @@ import fire
 from pathlib import Path
 from agent_smith.orchestrator.models import MBPPTaskInput
 from agent_smith.orchestrator.mbpp import MBPPOrchestrator
+# from agent_smith.evaluation_logging import save_evaluation_logs
+
+# el output debe ser el resultado de save_evaluation?
 
 
 def main(
@@ -35,6 +38,7 @@ def main(
     solution_output = orchestrator.solve_task(task_input)
 
     output_path = Path(output)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w", encoding="utf-8") as f:
