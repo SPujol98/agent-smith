@@ -249,7 +249,6 @@ class BaseOrchestrator(ABC):
                     success = True
                     final_solution = execution_result.final_answer_value
                     break
-
                 messages.append({"role": "assistant", "content": raw_output})
                 messages.append({
                     "role": "user",
