@@ -5,7 +5,7 @@ import re
 import time
 from abc import ABC
 from datetime import datetime
-from abc import ABC
+from openai import OpenAI
 from typing import List, Dict, Any, Optional
 from agent_smith.sandbox.runner import SandboxRunner
 from agent_smith.sandbox.result import ExecutionResult
@@ -257,7 +257,8 @@ class BaseOrchestrator(ABC):
                     {
                         "role": "user",
                         "content": (
-                            f"Observation from sandbox:\n{execution_result.output}"
+                            f"Observation from sandbox:"
+                            f"\n{execution_result.output}"
                         ),
                     }
                 )
