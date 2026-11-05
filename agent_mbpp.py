@@ -3,10 +3,14 @@ import json
 import fire
 import sys
 import io
+import os
 from pathlib import Path
+from dotenv import load_dotenv
 from agent_smith.orchestrator.models import MBPPTaskInput
 from agent_smith.orchestrator.mbpp import MBPPOrchestrator
 from agent_smith.evaluation_logging import save_evaluation_logs
+
+load_dotenv()
 
 
 def main(
@@ -29,10 +33,13 @@ def main(
         task_raw_data = json.load(f)
 
     task_input = MBPPTaskInput(**task_raw_data)
+    raw_keys = os.getenv("LLM_API_KEYS", os.getenv("OPENAI_API_KEY", ""))
+    api_keys_list = [k.strip() for k in raw_keys.split(",") if k.strip()]
 
     orchestrator = MBPPOrchestrator(
         model_name=model_name,
-        default_provider_url=provider_url
+        default_provider_url=provider_url,
+        api_keys=api_keys_list if api_keys_list else None
     )
 
     old_stdout = sys.stdout
