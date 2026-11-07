@@ -1,6 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Field, Optional
+from typing import List, Optional
 
 
 # Model for Task input MBPP
