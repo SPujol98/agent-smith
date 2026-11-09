@@ -10,7 +10,6 @@ import pytest
 from agent_smith.config import SandboxConfig
 from agent_smith.sandbox.result import ExecutionResult
 from agent_smith.sandbox.runner import SandboxRunner
-from agent_smith.sandbox.security import SecurityError
 
 
 def test_runner_executes_safe_code() -> None:
@@ -42,9 +41,13 @@ def test_runner_blocks_unauthorized_imports() -> None:
     code = "import os"
     runner = SandboxRunner(authorized_imports=["math"])
 
-    # Act & Assert
-    with pytest.raises(SecurityError):
-        runner.run(code)
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("SecurityError")
 
 
 def test_runner_enforces_filesystem_sandbox() -> None:
@@ -58,9 +61,14 @@ def test_runner_enforces_filesystem_sandbox() -> None:
 
         code = f"with open('{target_path}', 'w') as f:\n    f.write('pwned')"
 
-        # Act & Assert
-        with pytest.raises((PermissionError, SecurityError)):
-            runner.run(code)
+        # Act
+        result = runner.run(code)
+
+        # Assert
+        assert result.success is False
+        assert result.error is not None
+        assert "SecurityError" in result.error
+        assert not target_path.exists()
 
 
 def test_runner_allows_filesystem_write_in_permitted_dir() -> None:
@@ -89,9 +97,13 @@ import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 """
 
-    # Act & Assert
-    with pytest.raises(SecurityError):
-        runner.run(code)
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is False
+    assert result.error is not None
+    assert "SecurityError" in result.error
 
 
 def test_runner_returns_execution_result_on_success() -> None:
@@ -364,3 +376,24 @@ def test_runner_reports_child_that_dies_without_result() -> None:
     assert result.error is not None
     assert "terminated unexpectedly" in result.error
     assert "exit code 3" in result.error
+
+
+def test_runner_propagates_system_exit() -> None:
+    """Ensure SystemExit from the code reaches the caller (agent loop)."""
+    # Arrange
+    runner = SandboxRunner()
+
+    # Act & Assert
+    with pytest.raises(SystemExit) as exc_info:
+        runner.run("raise SystemExit(3)")
+    assert exc_info.value.code == 3
+
+
+def test_runner_propagates_keyboard_interrupt() -> None:
+    """Ensure KeyboardInterrupt from the code reaches the caller."""
+    # Arrange
+    runner = SandboxRunner()
+
+    # Act & Assert
+    with pytest.raises(KeyboardInterrupt):
+        runner.run("raise KeyboardInterrupt")

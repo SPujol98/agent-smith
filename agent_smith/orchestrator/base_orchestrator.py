@@ -5,11 +5,13 @@ import re
 import time
 from abc import ABC
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from openai import OpenAI
-from typing import List, Dict, Any, Optional
-from agent_smith.sandbox.runner import SandboxRunner
-from agent_smith.sandbox.result import ExecutionResult
+
 from agent_smith.orchestrator.models import SolutionOutput, StepMetrics
+from agent_smith.sandbox.result import ExecutionResult
+from agent_smith.sandbox.runner import SandboxRunner
 
 
 class BaseOrchestrator(ABC):
@@ -210,7 +212,7 @@ class BaseOrchestrator(ABC):
             try:
                 llm_response = self._call_llm(messages)
                 retries_count = llm_response.get("retries", 0)
-                total_requests += (1 + retries_count)
+                total_requests += 1 + retries_count
 
                 in_tokens = llm_response.get("input_tokens", 0)
                 out_tokens = llm_response.get("output_tokens", 0)
@@ -221,8 +223,8 @@ class BaseOrchestrator(ABC):
 
                 code_to_run = self._extract_code(raw_output)
 
-                execution_result: ExecutionResult = (
-                    self.sandbox_runner.run(code_to_run)
+                execution_result: ExecutionResult = self.sandbox_runner.run(
+                    code_to_run
                 )
 
                 sandbox_output_combined = (
@@ -251,10 +253,10 @@ class BaseOrchestrator(ABC):
                     llm_output=raw_output,
                     sandbox_input=code_to_run,
                     sandbox_output=sandbox_output_combined,
-                    retries=retries_count
+                    retries=retries_count,
                 )
                 steps.append(step_metric)
-# pendiente finer_answer de sergio para terminar de configurar la salida
+                # pendiente finer_answer de sergio para terminar de configurar la salida
                 if execution_result.is_finished:
                     success = True
                     final_solution = execution_result.final_answer_value

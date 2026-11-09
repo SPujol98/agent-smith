@@ -58,11 +58,17 @@ def _picklable_items(execution_env: dict[str, Any]) -> dict[str, Any]:
 
 
 def _current_address_space() -> int:
-    return 0
+    """Virtual memory already mapped by this process, in bytes (Linux)."""
+    try:
+        with open("/proc/self/statm", encoding="ascii") as statm:
+            pages = int(statm.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 0
+    return pages * os.sysconf("SC_PAGE_SIZE")
 
 
 def _apply_memory_limit(max_memory_mb: int) -> None:
-    """Let the code allocate at most max_memory_mb on top of what the forked 
+    """Let the code allocate at most max_memory_mb on top of what the forked
     child already uses."""
     if max_memory_mb <= 0:
         return
@@ -108,6 +114,14 @@ class SandboxRunner:
                 result_env={},
                 error="".join(traceback.format_exception_only(type(e), e)),
             )
+        except SecurityError as e:
+            return ExecutionResult(
+                success=False,
+                stdout="",
+                stderr="",
+                result_env={},
+                error=f"SecurityError: {e}",
+            )
 
         parent_conn, child_conn = _MP_CONTEXT.Pipe()
         process = _MP_CONTEXT.Process(
@@ -137,7 +151,20 @@ class SandboxRunner:
                             f"{timeout} seconds (output may be partial)"
                         ),
                     )
-                message = parent_conn.recv()
+                try:
+                    message = parent_conn.recv()
+                except EOFError:
+                    process.join()
+                    return ExecutionResult(
+                        success=False,
+                        stdout="".join(stdout),
+                        stderr="".join(stderr),
+                        result_env={},
+                        error=(
+                            "SandboxError: execution process terminated "
+                            f"unexpectedly (exit code {process.exitcode})"
+                        ),
+                    )
                 if message[0] == "stdout":
                     stdout.append(message[1])
                 elif message[0] == "stderr":
@@ -160,6 +187,7 @@ class SandboxRunner:
             parent_conn.close()
 
     def _child_main(self, conn: Connection, code: str) -> None:
+        _apply_memory_limit(self.config.max_memory_mb)
         execution_env: dict[str, Any] = {
             "__builtins__": self.builtins_guard.build_builtins(),
             "__name__": "__main__",
@@ -173,8 +201,16 @@ class SandboxRunner:
                 message: tuple[Any, ...]
                 try:
                     exec(code, execution_env)
-                except (SecurityError, PermissionError) as e:
+                except (KeyboardInterrupt, SystemExit) as e:
                     message = ("raise", e)
+                except MemoryError:
+                    message = (
+                        "done",
+                        False,
+                        {},
+                        "MemoryError: memory limit"
+                        f" of {self.config.max_memory_mb} MB exceeded",
+                    )
                 except Exception:
                     message = (
                         "done",

@@ -1,18 +1,20 @@
 # Specific Logic and Prompts for MBPP (Mostly Basic Python Problems)
 
+from typing import Any, Dict, List, Optional
+
 from agent_smith.orchestrator.base_orchestrator import BaseOrchestrator
 from agent_smith.orchestrator.models import (
     MBPPTaskInput,
     SolutionOutput,
-    StepMetrics
+    StepMetrics,
 )
-from typing import Optional, List, Dict, Any
 
 
 class MBPPOrchestrator(BaseOrchestrator):
     """
     A specialized orchestrator for handling MBPP tasks.
     """
+
     def __init__(
         self,
         model_name: str,
@@ -45,7 +47,7 @@ class MBPPOrchestrator(BaseOrchestrator):
             max_iterations=max_iterations,
             providers_config=providers_config,
             default_provider_url=default_provider_url,
-            api_keys=api_keys
+            api_keys=api_keys,
         )
 
     def solve_task(self, task_input: MBPPTaskInput) -> SolutionOutput:
@@ -65,5 +67,5 @@ class MBPPOrchestrator(BaseOrchestrator):
             task_id=str(task_input.task_id),
             initial_task_prompt=initial_prompt,
             step_metrics_class=StepMetrics,
-            solution_output_class=SolutionOutput
+            solution_output_class=SolutionOutput,
         )
