@@ -1,7 +1,11 @@
 # Specific Logic and Prompts for MBPP (Mostly Basic Python Problems)
 
-from base_orchestrator import BaseOrchestrator
-from models import MBPPTaskInput, SolutionOutput, StepMetrics
+from agent_smith.orchestrator.base_orchestrator import BaseOrchestrator
+from agent_smith.orchestrator.models import (
+    MBPPTaskInput,
+    SolutionOutput,
+    StepMetrics
+)
 from typing import Optional, List, Dict, Any
 
 

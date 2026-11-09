@@ -2,8 +2,12 @@
 # from base import BaseOrchestrator
 import subprocess
 import uuid
-from base_orchestrator import BaseOrchestrator
-from models import SWEBenchTaskInput, SolutionOutput, StepMetrics
+from agent_smith.orchestrator.base_orchestrator import BaseOrchestrator
+from agent_smith.orchestrator.models import (
+    SWEBenchTaskInput,
+    SolutionOutput,
+    StepMetrics
+)
 from typing import Optional, List, Dict, Any
 
 

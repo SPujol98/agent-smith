@@ -175,11 +175,11 @@ class BaseOrchestrator(ABC):
                 params_content,
                 re.DOTALL,
             )
-        if param_matches:
-            args_str = ", ".join(
-                f'{p[0]}="{p[1].strip()}"' for p in param_matches
-            )
-            return f"result = {func_name}({args_str})\nprint(result)"
+            if param_matches:
+                args_str = ", ".join(
+                    f'{p[0]}="{p[1].strip()}"' for p in param_matches
+                )
+                return f"result = {func_name}({args_str})\nprint(result)"
 
         return llm_output.strip()
 
@@ -234,12 +234,18 @@ class BaseOrchestrator(ABC):
                         f"\nError:\n{execution_result.error}"
                     )
 
+                active_api_url = (
+                    llm_response.get("active_url")
+                    or self.provider_url
+                    or "https://api.openai.com/v1"
+                )
+
                 step_metric = step_metrics_class(
                     step=iteration,
                     input_tokens=in_tokens,
                     output_tokens=out_tokens,
                     request_time_ms=llm_response.get("latency_ms", 0.0),
-                    api_url=self.provider_url,
+                    api_url=active_api_url,
                     model_name=self.model_name,
                     llm_output=raw_output,
                     sandbox_input=code_to_run,
