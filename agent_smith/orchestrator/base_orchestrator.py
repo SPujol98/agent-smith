@@ -209,7 +209,8 @@ class BaseOrchestrator(ABC):
         for iteration in range(1, self.max_iterations + 1):
             try:
                 llm_response = self._call_llm(messages)
-                total_requests += 1
+                retries_count = llm_response.get("retries", 0)
+                total_requests += (1 + retries_count)
 
                 in_tokens = llm_response.get("input_tokens", 0)
                 out_tokens = llm_response.get("output_tokens", 0)
