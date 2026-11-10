@@ -1,25 +1,24 @@
 # Executable CLI script (calls the SWE-bench logic)
 # Instan la clas: orchestrator = SWEBenchOrchestrator(model_name, provider_url)
-import json
-import fire
-import sys
 import io
+import json
 import os
+import sys
 from pathlib import Path
+
+import fire
 from dotenv import load_dotenv
+
+from agent_smith.evaluation_logging import save_evaluation_logs
 from agent_smith.orchestrator.models import SWEBenchTaskInput
 from agent_smith.orchestrator.swebench import SWEBenchOrchestrator
-from agent_smith.evaluation_logging import save_evaluation_logs
 
 load_dotenv()
 
 
 def main(
-    task_file: str,
-    output: str,
-    model_name: str,
-    provider_url: str = None
-):
+    task_file: str, output: str, model_name: str, provider_url: str = ""
+) -> None:
     """
     CLI for running the standalone agent on SWE-bench tasks using Python Fire,
     including automatic evaluation logging.
@@ -41,7 +40,7 @@ def main(
     orchestrator = SWEBenchOrchestrator(
         model_name=model_name,
         default_provider_url=provider_url,
-        api_keys=api_keys_list if api_keys_list else None
+        api_keys=api_keys_list if api_keys_list else None,
     )
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -76,8 +75,8 @@ def main(
         task_raw_data=task_raw_data,
         solution_output=solution_output,
         stdout_content=stdout_text,
-        stderr_content=stderr_text
-        )
+        stderr_content=stderr_text,
+    )
 
     print(
         f"[Success] SWE-bench Assignment '{task_input.instance_id}' "

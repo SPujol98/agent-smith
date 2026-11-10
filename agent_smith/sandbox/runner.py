@@ -42,6 +42,14 @@ class _PipeWriter(io.TextIOBase):
         return len(text)
 
 
+class _FinalAnswer(BaseException):
+    """Raised by final_answer() to stop the execution.
+
+    Inherits from BaseException so `except Exception` in the user's code
+    cannot swallow it.
+    """
+
+
 def _picklable_items(execution_env: dict[str, Any]) -> dict[str, Any]:
     """Return the namespace values that can be sent to the parent process
     (modules and functions defined by the code are dropped)"""
@@ -172,13 +180,15 @@ class SandboxRunner:
                 elif message[0] == "raise":
                     raise message[1]
                 else:
-                    _, success, env, error = message
+                    _, success, env, error, final_value = message
                     return ExecutionResult(
                         success=success,
                         stdout="".join(stdout),
                         stderr="".join(stderr),
                         result_env=env,
                         error=error,
+                        is_finished=final_value is not None,
+                        final_answer_value=final_value,
                     )
         finally:
             if process.is_alive():
@@ -188,9 +198,16 @@ class SandboxRunner:
 
     def _child_main(self, conn: Connection, code: str) -> None:
         _apply_memory_limit(self.config.max_memory_mb)
+        answers: list[str] = []
+
+        def final_answer(answer: Any) -> None:
+            answers.append(str(answer))
+            raise _FinalAnswer
+
         execution_env: dict[str, Any] = {
             "__builtins__": self.builtins_guard.build_builtins(),
             "__name__": "__main__",
+            "final_answer": final_answer,
         }
         try:
             with (
@@ -201,6 +218,9 @@ class SandboxRunner:
                 message: tuple[Any, ...]
                 try:
                     exec(code, execution_env)
+                except _FinalAnswer:
+                    message = ("done", True, _picklable_items(execution_env),
+                               None)
                 except (KeyboardInterrupt, SystemExit) as e:
                     message = ("raise", e)
                 except MemoryError:
@@ -225,6 +245,8 @@ class SandboxRunner:
                         _picklable_items(execution_env),
                         None,
                     )
+            if message[0] == "done":
+                message += (answers[0] if answers else None,)
             conn.send(message)
         finally:
             conn.close()

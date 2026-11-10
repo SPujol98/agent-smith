@@ -16,8 +16,8 @@ load_dotenv()
 
 
 def main(
-    task_file: str, output: str, model_name: str, provider_url: str = None
-):
+    task_file: str, output: str, model_name: str, provider_url: str = ""
+) -> None:
     """
     CLI for running the standalone agent on MBPP tasks using Python Fire,
     including automatic evaluation logging.

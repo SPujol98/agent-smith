@@ -256,7 +256,6 @@ class BaseOrchestrator(ABC):
                     retries=retries_count,
                 )
                 steps.append(step_metric)
-                # pendiente finer_answer de sergio para terminar de configurar la salida
                 if execution_result.is_finished:
                     success = True
                     final_solution = execution_result.final_answer_value

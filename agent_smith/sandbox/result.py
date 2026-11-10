@@ -13,3 +13,5 @@ class ExecutionResult:
     stderr: str
     result_env: dict[str, Any]
     error: str | None = None
+    is_finished: bool = False
+    final_answer_value: str | None = None

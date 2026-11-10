@@ -397,3 +397,80 @@ def test_runner_propagates_keyboard_interrupt() -> None:
     # Act & Assert
     with pytest.raises(KeyboardInterrupt):
         runner.run("raise KeyboardInterrupt")
+
+
+def test_final_answer_stops_execution_and_returns_value() -> None:
+    """Ensure final_answer ends the run and its value reaches the loop."""
+    # Arrange
+    runner = SandboxRunner()
+    code = """
+print("before")
+final_answer("def add(a, b):\\n    return a + b")
+print("after")
+"""
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.is_finished is True
+    assert result.final_answer_value == "def add(a, b):\n    return a + b"
+    assert result.stdout == "before\n"
+
+
+def test_final_answer_converts_value_to_string() -> None:
+    """Ensure non-string answers are converted with str()."""
+    # Act
+    result = SandboxRunner().run("final_answer(42)")
+
+    # Assert
+    assert result.is_finished is True
+    assert result.final_answer_value == "42"
+
+
+def test_run_without_final_answer_is_not_finished() -> None:
+    """Ensure a normal run does not signal the end of the task."""
+    # Act
+    result = SandboxRunner().run("x = 1")
+
+    # Assert
+    assert result.is_finished is False
+    assert result.final_answer_value is None
+
+
+@pytest.mark.parametrize("handler", ["Exception", "BaseException"])
+def test_final_answer_survives_user_exception_handlers(handler: str) -> None:
+    """Ensure catching exceptions around final_answer does not lose it."""
+    # Arrange
+    code = f"""
+try:
+    final_answer("kept")
+except {handler}:
+    pass
+"""
+
+    # Act
+    result = SandboxRunner().run(code)
+
+    # Assert
+    assert result.is_finished is True
+    assert result.final_answer_value == "kept"
+
+
+def test_first_final_answer_wins() -> None:
+    """Ensure only the first final_answer counts if it is called again."""
+    # Arrange
+    code = """
+try:
+    final_answer("first")
+except BaseException:
+    pass
+final_answer("second")
+"""
+
+    # Act
+    result = SandboxRunner().run(code)
+
+    # Assert
+    assert result.final_answer_value == "first"
