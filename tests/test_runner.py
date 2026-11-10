@@ -3,6 +3,7 @@
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -474,3 +475,85 @@ final_answer("second")
 
     # Assert
     assert result.final_answer_value == "first"
+
+
+def test_tool_runs_in_parent_and_returns_value() -> None:
+    """Ensure tools are executed by the parent and their value comes back."""
+    # Arrange
+    runner = SandboxRunner(functions={"parent_pid": os.getpid})
+
+    # Act
+    result = runner.run("pid = parent_pid()")
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.result_env["pid"] == os.getpid()
+
+
+def test_tool_receives_positional_and_keyword_arguments() -> None:
+    """Ensure args and kwargs reach the tool unchanged."""
+
+    # Arrange
+    def describe(a: int, b: int = 0, *, sep: str = "-") -> str:
+        return f"{a}{sep}{b}"
+
+    runner = SandboxRunner(functions={"describe": describe})
+
+    # Act
+    result = runner.run("print(describe(1, b=2, sep='+'))")
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.stdout == "1+2\n"
+
+
+def test_tool_error_is_raised_inside_the_code() -> None:
+    """Ensure a failing tool raises in the sandboxed code, where it can be
+    handled like any other exception."""
+
+    # Arrange
+    def failing() -> None:
+        raise ValueError("bad input")
+
+    runner = SandboxRunner(functions={"failing": failing})
+    code = """
+try:
+    failing()
+except ValueError as e:
+    print("caught:", e)
+"""
+
+    # Act
+    result = runner.run(code)
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.stdout == "caught: bad input\n"
+
+
+def test_tool_time_does_not_count_for_timeout() -> None:
+    """Ensure time spent in tools is not charged to the sandbox timeout."""
+
+    # Arrange
+    def slow_tool() -> str:
+        time.sleep(2)
+        return "done"
+
+    runner = SandboxRunner(
+        config=SandboxConfig(max_execution_time_seconds=1),
+        functions={"slow_tool": slow_tool},
+    )
+
+    # Act
+    result = runner.run("value = slow_tool()")
+
+    # Assert
+    assert result.success is True, result.error
+    assert result.result_env["value"] == "done"
+
+
+def test_final_answer_name_is_reserved() -> None:
+    """Ensure a tool cannot replace final_answer."""
+    # Act & Assert
+    with pytest.raises(ValueError):
+        SandboxRunner(functions={"final_answer": print})

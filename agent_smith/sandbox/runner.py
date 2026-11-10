@@ -5,7 +5,7 @@ import pickle
 import resource
 import time
 import traceback
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from multiprocessing.connection import Connection
 from pathlib import Path
@@ -87,12 +87,42 @@ def _apply_memory_limit(max_memory_mb: int) -> None:
     resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
 
 
+def _make_proxy(conn: Connection, name: str) -> Callable[..., Any]:
+    """Function for the child that runs the tool `name` in the parent."""
+
+    def proxy(*args: Any, **kwargs: Any) -> Any:
+        message = (
+            "call",
+            name,
+            args,
+            kwargs,
+        )
+        conn.send(message)
+        status, payload = conn.recv()
+        if status == "error":
+            raise payload
+        return payload
+
+    proxy.__name__ = name
+    return proxy
+
+
+def _transferable_exception(exc: BaseException) -> BaseException:
+    """Return exc if it can be sent through the pipe, or an equivalent."""
+    try:
+        pickle.dumps(exc)
+    except Exception:
+        return RuntimeError(f"{type(exc).__name__}: {exc}")
+    return exc
+
+
 class SandboxRunner:
     def __init__(
         self,
         allowed_directories: Sequence[str | Path] | None = None,
         authorized_imports: list[str] | None = None,
         config: SandboxConfig | None = None,
+        functions: Mapping[str, Callable[..., Any]] | None = None,
     ) -> None:
         self.config = config or SandboxConfig()
         self.allowed_directories = (
@@ -105,6 +135,9 @@ class SandboxRunner:
             if authorized_imports is not None
             else self.config.authorized_imports
         )
+        self.functions = dict(functions or {})
+        if "final_answer" in self.functions:
+            raise ValueError("'final_answer' is reserved by the sandbox.")
 
         self.fs_guard = FileSystemGuard(self.allowed_directories)
         self.builtins_guard = BuiltinsGuard(
@@ -179,6 +212,11 @@ class SandboxRunner:
                     stderr.append(message[1])
                 elif message[0] == "raise":
                     raise message[1]
+                elif message[0] == "call":
+                    started = time.monotonic()
+                    parent_conn.send(self._call_function(*message[1:]))
+                    if deadline is not None:
+                        deadline += time.monotonic() - started
                 else:
                     _, success, env, error, final_value = message
                     return ExecutionResult(
@@ -196,6 +234,17 @@ class SandboxRunner:
             process.join()
             parent_conn.close()
 
+    def _call_function(
+        self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> tuple[str, Any]:
+        """Run a tool for the child and build the reply message."""
+        try:
+            value = self.functions[name](*args, **kwargs)
+            pickle.dumps(value)
+        except Exception as exc:
+            return ("error", _transferable_exception(exc))
+        return ("ok", value)
+
     def _child_main(self, conn: Connection, code: str) -> None:
         _apply_memory_limit(self.config.max_memory_mb)
         answers: list[str] = []
@@ -209,6 +258,8 @@ class SandboxRunner:
             "__name__": "__main__",
             "final_answer": final_answer,
         }
+        for name in self.functions:
+            execution_env[name] = _make_proxy(conn, name)
         try:
             with (
                 redirect_stdout(cast(TextIO, _PipeWriter(conn, "stdout"))),
@@ -219,8 +270,12 @@ class SandboxRunner:
                 try:
                     exec(code, execution_env)
                 except _FinalAnswer:
-                    message = ("done", True, _picklable_items(execution_env),
-                               None)
+                    message = (
+                        "done",
+                        True,
+                        _picklable_items(execution_env),
+                        None,
+                    )
                 except (KeyboardInterrupt, SystemExit) as e:
                     message = ("raise", e)
                 except MemoryError:
