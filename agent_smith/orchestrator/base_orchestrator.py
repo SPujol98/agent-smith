@@ -266,7 +266,7 @@ class BaseOrchestrator(ABC):
                         "role": "user",
                         "content": (
                             f"Observation from sandbox:"
-                            f"\n{execution_result.output}"
+                            f"\n{sandbox_output_combined}"
                         ),
                     }
                 )

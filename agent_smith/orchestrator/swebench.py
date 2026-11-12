@@ -50,12 +50,12 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             api_keys=api_keys
         )
 
-    def _start_docker_container(self, image_name: str, container_name: str):
+    def _start_docker_container(self, docker_image: str, container_name: str):
         """Start the Docker container in the background for the task."""
 
         print(
             f"[Docker] Starting a container {container_name} "
-            f"with an Image {image_name}..."
+            f"with an Image {docker_image}..."
         )
 
         cmd = [
@@ -64,7 +64,7 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             "-d",
             "--name",
             container_name,
-            image_name,
+            docker_image,
             "sleep",
             "infinity"
         ]
@@ -108,10 +108,10 @@ class SWEBenchOrchestrator(BaseOrchestrator):
         )
         container_name = f"agent_smith_{safe_id}_{uuid.uuid4().hex[:6]}"
 
-        image_name = getattr(task_input, "image_name", "python:3.10-slim")
+        docker_image = getattr(task_input, "docker_image", "python:3.10-slim")
 
         try:
-            self._start_docker_container(image_name, container_name)
+            self._start_docker_container(docker_image, container_name)
 
             hints = (
                 task_input.hints_text
