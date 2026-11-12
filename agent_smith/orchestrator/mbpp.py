@@ -48,6 +48,9 @@ class MBPPOrchestrator(BaseOrchestrator):
             providers_config=providers_config,
             default_provider_url=default_provider_url,
             api_keys=api_keys,
+            max_input_tokens=6000,
+            max_output_tokens=1500,
+            max_time_seconds=120.0,
         )
 
     def solve_task(self, task_input: MBPPTaskInput) -> SolutionOutput:

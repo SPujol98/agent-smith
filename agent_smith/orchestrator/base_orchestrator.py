@@ -1,17 +1,14 @@
 # Generic Agent Loop (Thought -> Code -> Observation)
-import json
-import os
-import re
 import time
 from abc import ABC
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
-
 from agent_smith.orchestrator.models import SolutionOutput, StepMetrics
 from agent_smith.sandbox.result import ExecutionResult
 from agent_smith.sandbox.runner import SandboxRunner
+from agent_smith.orchestrator.extraction import extract_code
+from agent_smith.orchestrator.llm_manager import LLMProviderManager
 
 
 class BaseOrchestrator(ABC):
@@ -24,166 +21,25 @@ class BaseOrchestrator(ABC):
         providers_config: Optional[List[Dict[str, Any]]] = None,
         default_provider_url: Optional[str] = None,
         api_keys: Optional[List[str]] = None,
+        max_input_tokens: int = 100000,
+        max_output_tokens: int = 10000,
+        max_time_seconds: float = 300.0,
     ):
         self.model_name = model_name
-        self.provider_url = default_provider_url
         self.system_prompt = system_prompt
         self.benchmark = benchmark
         self.max_iterations = max_iterations
-        if providers_config:
-            self.providers = providers_config
-        else:
-            self.providers = [
-                {
-                    "url": default_provider_url,
-                    "keys": (
-                        api_keys
-                        if api_keys
-                        else [os.getenv("OPENAI_API_KEY", "dummy-key")]
-                    ),
-                }
-            ]
-        self._current_provider_index = 0
-        self._current_key_index = 0
-        self.sandbox_runner = SandboxRunner()
+        self.max_input_tokens = max_input_tokens
+        self.max_output_tokens = max_output_tokens
+        self.max_time_seconds = max_time_seconds
 
-    def _get_active_client(self) -> OpenAI:
-        """
-        Get the OpenAI client by specifying the current provider and token.
-        """
-        prov = self.providers[self._current_provider_index]
-        current_url = prov.get("url")
-        keys = prov.get("keys", ["dummy"])
-        current_key = keys[self._current_key_index % len(keys)]
-
-        return OpenAI(
-            base_url=current_url if current_url else None, api_key=current_key
+        self.llm_manager = LLMProviderManager(
+            model_name=model_name,
+            default_provider_url=default_provider_url,
+            providers_config=providers_config,
+            api_keys=api_keys,
         )
-
-    def _rotate_key_or_provider(self) -> None:
-        """
-        Rotation and Fallback Strategy:
-        1. Attempt to rotate to the next token from the current provider.
-        2. If this provider's keys have already run out,
-            fall back to the next provider.
-        """
-        prov = self.providers[self._current_provider_index]
-        keys = prov.get("keys", [])
-
-        self._current_key_index += 1
-
-        if self._current_key_index >= len(keys):
-            self._current_key_index = 0
-            old_prov_idx = self._current_provider_index
-            self._current_provider_index = (
-                self._current_provider_index + 1
-            ) % len(self.providers)
-            print(
-                "[Provider Fallback] Switching index providers"
-                f" {old_prov_idx} to {self._current_provider_index}"
-            )
-        else:
-            print(
-                "[Token Rotation] Rotating to the next API key "
-                "from the current provider."
-            )
-
-    def _call_llm(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        """
-        Call to the LLM with full support for Multi-Key,
-        Multi-Provider, and Fallback.
-        """
-        max_attempts = sum(len(p.get("keys", [])) for p in self.providers) * 2
-        attempts = 0
-        backoff_factor = 2
-
-        start_time = time.time()
-
-        while attempts < max_attempts:
-            try:
-                client = self._get_active_client()
-
-                response = client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    temperature=0.2,
-                    stop=["</end_code>", "<end_code>", "</tool_call>"],
-                )
-
-                latency_ms = (time.time() - start_time) * 1000
-                text_output = response.choices[0].message.content or ""
-
-                usage = response.usage
-                input_tokens = usage.prompt_tokens if usage else 0
-                output_tokens = usage.completion_tokens if usage else 0
-
-                active_prov = self.providers[self._current_provider_index]
-
-                return {
-                    "text": text_output,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "latency_ms": latency_ms,
-                    "retries": attempts,
-                    "active_url": active_prov.get("url"),
-                }
-
-            except Exception as e:
-                attempts += 1
-                print(
-                    "[Warning] LLM error "
-                    f"(Attempt {attempts}/{max_attempts}): {e}"
-                )
-                self._rotate_key_or_provider()
-                if attempts >= max_attempts:
-                    raise RuntimeError(
-                        "Total failure: All available tokens and providers "
-                        f"have been exhausted: {str(e)}"
-                    )
-                time.sleep(backoff_factor ** (attempts % 3))
-
-    def _extract_code(self, llm_output: str) -> str:
-        """A universal method for extracting code
-        blocks from the LLM's response,
-
-        handling multiple model output formats
-        (Python blocks, XML, JSON/Hermes,ReAct)
-        """
-
-        python_pattern = r"```(?:python)?\s*(.*?)\s*```"
-        match = re.search(python_pattern, llm_output, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        tool_call_pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
-        tc_match = re.search(tool_call_pattern, llm_output, re.DOTALL)
-        if tc_match:
-            try:
-                data = json.loads(tc_match.group(1))
-                name = data.get("name")
-                args = data.get("arguments", {})
-                args_str = ", ".join(f"{k}={v!r}" for k, v in args.items())
-                return f"result = {name}({args_str})\nprint(result)"
-            except Exception:
-                pass
-
-        invoke_pattern = r'<invoke\s+name=["\'](.*?)["\']>(.*?)</invoke>'
-        inv_match = re.search(invoke_pattern, llm_output, re.DOTALL)
-        if inv_match:
-            func_name = inv_match.group(1)
-            params_content = inv_match.group(2)
-            param_matches = re.findall(
-                r'<parameter\s+name=["\'](.*?)["\']>(.*?)</parameter>',
-                params_content,
-                re.DOTALL,
-            )
-            if param_matches:
-                args_str = ", ".join(
-                    f'{p[0]}="{p[1].strip()}"' for p in param_matches
-                )
-                return f"result = {func_name}({args_str})\nprint(result)"
-
-        return llm_output.strip()
+        self.sandbox_runner = SandboxRunner()
 
     def run(
         self,
@@ -210,7 +66,16 @@ class BaseOrchestrator(ABC):
 
         for iteration in range(1, self.max_iterations + 1):
             try:
-                llm_response = self._call_llm(messages)
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= self.max_time_seconds:
+                    error_message = f"TimeLimitExceeded: {self.max_time_seconds}s exceeded."
+                    break
+
+                if total_input_tokens >= self.max_input_tokens:
+                    error_message = f"TokenBudgetExceeded: Input tokens limit exceeded."
+                    break
+
+                llm_response = self.llm_manager.call_llm(messages)
                 retries_count = llm_response.get("retries", 0)
                 total_requests += 1 + retries_count
 
@@ -218,28 +83,26 @@ class BaseOrchestrator(ABC):
                 out_tokens = llm_response.get("output_tokens", 0)
                 total_input_tokens += in_tokens
                 total_output_tokens += out_tokens
+
+                if total_output_tokens >= self.max_output_tokens:
+                    error_message = f"TokenBudgetExceeded: Output tokens limit exceeded."
+                    break
+
                 raw_output = llm_response.get("text", "")
-                retries_count = llm_response.get("retries", 0)
+                code_to_run = extract_code(raw_output)
 
-                code_to_run = self._extract_code(raw_output)
-
-                execution_result: ExecutionResult = self.sandbox_runner.run(
-                    code_to_run
-                )
+                execution_result: ExecutionResult = self.sandbox_runner.run(code_to_run)
 
                 sandbox_output_combined = (
                     f"Stdout:\n{execution_result.stdout}\n"
                     f"Stderr:\n{execution_result.stderr}"
                 )
-
                 if execution_result.error:
-                    sandbox_output_combined += (
-                        f"\nError:\n{execution_result.error}"
-                    )
+                    sandbox_output_combined += f"\nError:\n{execution_result.error}"
 
                 active_api_url = (
                     llm_response.get("active_url")
-                    or self.provider_url
+                    or self.llm_manager.default_provider_url
                     or "https://api.openai.com/v1"
                 )
 
@@ -256,20 +119,17 @@ class BaseOrchestrator(ABC):
                     retries=retries_count,
                 )
                 steps.append(step_metric)
+
                 if execution_result.is_finished:
                     success = True
                     final_solution = execution_result.final_answer_value
                     break
+
                 messages.append({"role": "assistant", "content": raw_output})
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Observation from sandbox:"
-                            f"\n{sandbox_output_combined}"
-                        ),
-                    }
-                )
+                messages.append({
+                    "role": "user",
+                    "content": f"Observation from sandbox:\n{sandbox_output_combined}",
+                })
 
             except Exception as e:
                 error_message = str(e)

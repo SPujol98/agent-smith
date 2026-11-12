@@ -47,7 +47,10 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             max_iterations=max_iterations,
             providers_config=providers_config,
             default_provider_url=default_provider_url,
-            api_keys=api_keys
+            api_keys=api_keys,
+            max_input_tokens=300000,
+            max_output_tokens=10000,
+            max_time_seconds=900.0,
         )
 
     def _start_docker_container(self, docker_image: str, container_name: str):
