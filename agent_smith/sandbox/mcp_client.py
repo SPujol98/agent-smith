@@ -18,8 +18,31 @@ from mcp.types import CallToolResult, Tool
 _T = TypeVar("_T")
 
 
+class MCPToolError(Exception):
+    """The MCP tool could not be executed."""
+
+
 class MCPConnectionError(RuntimeError):
     """The connection to the MCP server could not be established."""
+
+
+def _result_value(result: CallToolResult) -> Any:
+    """Turn a raw MCP tool result into the value the code receives."""
+    text = "\n".join(
+        getattr(block, "text", f"[{block.type} content]")
+        for block in result.content
+    )
+    if result.is_error:
+        raise MCPToolError(text or "The tool reported an error")
+    structured = result.structured_content
+    if structured is None:
+        return text
+    if set(structured) == {"result"}:
+        return structured["result"]
+    return structured
+
+# .content devuelve Lista de bloques de contenido .text /
+# .is_error devuelve bool / .structured_content devuelve dict o None
 
 
 class MCPClient:
@@ -34,6 +57,17 @@ class MCPClient:
         self._stop: asyncio.Event | None = None
         self._client: Client | None = None
         self._error: BaseException | None = None
+
+    def _tool_function(self, tool: Tool) -> Callable[..., Any]:
+        """Python function that calls `tool` on the server."""
+        params = list(tool.input_schema.get("properties", {}))
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            ...
+
+        call.__name__ = tool.name
+        call.__doc__ = tool.description
+        return call
 
     @classmethod
     def from_stdio(
