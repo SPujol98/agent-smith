@@ -19,7 +19,7 @@ _T = TypeVar("_T")
 
 
 class MCPToolError(Exception):
-    """The MCP tool could not be executed."""
+    """A tool reported an error; raised inside the sandboxed code."""
 
 
 class MCPConnectionError(RuntimeError):
@@ -41,9 +41,6 @@ def _result_value(result: CallToolResult) -> Any:
         return structured["result"]
     return structured
 
-# .content devuelve Lista de bloques de contenido .text /
-# .is_error devuelve bool / .structured_content devuelve dict o None
-
 
 class MCPClient:
     """Synchronous MCP client, used as a context manager."""
@@ -63,11 +60,30 @@ class MCPClient:
         params = list(tool.input_schema.get("properties", {}))
 
         def call(*args: Any, **kwargs: Any) -> Any:
-            ...
+            if len(args) > len(params):
+                raise TypeError(
+                    f"{tool.name}() takes {len(params)} arguments "
+                    f"but {len(args)} were given"
+                )
+            arguments = dict(zip(params, args))
+            repeated = arguments.keys() & kwargs.keys()
+            if repeated:
+                raise TypeError(
+                    f"{tool.name}() got multiple values for "
+                    f"{', '.join(sorted(repeated))}"
+                )
+            arguments.update(kwargs)
+            return _result_value(self.call_tool(tool.name, arguments))
 
         call.__name__ = tool.name
         call.__doc__ = tool.description
         return call
+
+    def tool_functions(self) -> dict[str, Callable[..., Any]]:
+        """One Python function per server tool, keyed by tool name."""
+        return {
+            tool.name: self._tool_function(tool) for tool in self.list_tools()
+        }
 
     @classmethod
     def from_stdio(
