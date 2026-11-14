@@ -1,5 +1,6 @@
 # Specific Logic and Prompts for MBPP (Mostly Basic Python Problems)
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from agent_smith.orchestrator.base_orchestrator import BaseOrchestrator
@@ -8,7 +9,6 @@ from agent_smith.orchestrator.models import (
     SolutionOutput,
     StepMetrics,
 )
-from datetime import datetime
 from agent_smith.sandbox.mcp_client import MCPClient
 from agent_smith.sandbox.runner import SandboxRunner
 
@@ -122,6 +122,7 @@ class MBPPOrchestrator(BaseOrchestrator):
                 error=f"MCPConnectionOrSandboxError: {str(e)}",
                 timestamp=(
                     datetime.now().isoformat()
-                    if 'datetime' in globals() else ""
+                    if "datetime" in globals()
+                    else ""
                 ),
             )

@@ -9,9 +9,11 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from multiprocessing.connection import Connection
 from pathlib import Path
+from types import TracebackType
 from typing import Any, TextIO, cast
 
 from agent_smith.config import SandboxConfig
+from agent_smith.sandbox.mcp_client import MCPClient, MCPConnectionError
 from agent_smith.sandbox.result import ExecutionResult
 from agent_smith.sandbox.security import (
     BuiltinsGuard,
@@ -23,6 +25,11 @@ from agent_smith.sandbox.security import (
 
 _MP_CONTEXT = multiprocessing.get_context("fork")
 _MB = 1024 * 1024
+_FINAL_ANSWER_MANUAL = (
+    "Always available:\n"
+    "- final_answer(answer: str) -> None: Give the final answer and stop "
+    "the execution."
+)
 
 
 class _PipeWriter(io.TextIOBase):
@@ -123,6 +130,9 @@ class SandboxRunner:
         authorized_imports: list[str] | None = None,
         config: SandboxConfig | None = None,
         functions: Mapping[str, Callable[..., Any]] | None = None,
+        mcp_stdio: str | None = None,
+        mcp_url: str | None = None,
+        mcp_env: dict[str, str] | None = None,
     ) -> None:
         self.config = config or SandboxConfig()
         self.allowed_directories = (
@@ -139,10 +149,46 @@ class SandboxRunner:
         if "final_answer" in self.functions:
             raise ValueError("'final_answer' is reserved by the sandbox.")
 
+        if mcp_stdio and mcp_url:
+            raise ValueError("Use either mcp_stdio or mcp_url, not both")
+        self._mcp: MCPClient | None = None
+        if mcp_stdio:
+            self._mcp = MCPClient.from_stdio(mcp_stdio, env=mcp_env)
+        elif mcp_url:
+            self._mcp = MCPClient.from_url(mcp_url)
+        self.manual = _FINAL_ANSWER_MANUAL
         self.fs_guard = FileSystemGuard(self.allowed_directories)
         self.builtins_guard = BuiltinsGuard(
             self.fs_guard, authorized_imports=self.authorized_imports
         )
+
+    def __enter__(self) -> "SandboxRunner":
+        """Connect to the MCP server (if any) and expose its functions."""
+        if self._mcp is None:
+            return self
+        self._mcp.__enter__()
+        try:
+            mcp_functions = self._mcp.sandbox_functions()
+            clash = mcp_functions.keys() & (self.functions.keys()
+                                            | {"final_answer"})
+            if clash:
+                raise MCPConnectionError(
+                    "MCP server uses names already taken in the sandbox: "
+                    f"{', '.join(sorted(clash))}"
+                )
+            self.functions.update(mcp_functions)
+            self.manual = f"{_FINAL_ANSWER_MANUAL}\n\n{self._mcp.manual()}"
+        except BaseException:
+            self._mcp.__exit__(None, None, None)
+            raise
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None,
+                 exc: BaseException | None,
+                 tb: TracebackType | None) -> None:
+        """Close the MCP connection (if any)."""
+        if self._mcp is not None:
+            self._mcp.__exit__(exc_type, exc, tb)
 
     def run(self, code: str) -> ExecutionResult:
         try:

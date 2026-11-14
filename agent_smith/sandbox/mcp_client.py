@@ -15,6 +15,8 @@ from typing import Any, TypeVar
 from mcp import Client, MCPError, StdioServerParameters
 from mcp.types import CallToolResult, Tool
 
+from agent_smith.sandbox.mcp_manual import build_manual
+
 _T = TypeVar("_T")
 
 
@@ -71,6 +73,18 @@ class MCPClient:
                 f"{', '.join(sorted(clash))}"
             )
         return {**helpers, **tools}
+
+    def manual(self) -> str:
+        """Manual of the server's tools, resources and prompts for the LLM."""
+        try:
+            resources = self.list_resources()
+        except MCPError:
+            resources = []
+        try:
+            prompts = self.list_prompts()
+        except MCPError:
+            prompts = []
+        return build_manual(self.list_tools(), resources, prompts)
 
     @classmethod
     def from_stdio(
