@@ -9,6 +9,8 @@ from agent_smith.orchestrator.models import (
     StepMetrics
 )
 from typing import Optional, List, Dict, Any
+from agent_smith.sandbox.mcp_client import MCPClient
+from agent_smith.sandbox.runner import SandboxRunner
 
 
 class SWEBenchOrchestrator(BaseOrchestrator):
@@ -38,6 +40,36 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             "5. When the fix is verified, generate the git patch (diff) using "
             "`git -c core.fileMode=false diff` and finish by calling "
             "final_answer(patch_string).\n"
+            "### Example Interaction:\n"
+            "Thought: I need to inspect the files under /testbed/ to find "
+            "where the bug resides.\n"
+            "```python\n"
+            "content = read_file('/testbed/math_utils.py')\n"
+            "print(content)\n"
+            "```\n"
+            "Observation from sandbox:\n"
+            "Stdout:\n"
+            "def divide(a, b):\n"
+            "    return a / b  # Bug: no zero division check\n"
+            "...\n"
+            "Thought: I found the issue. I will fix the bug in the file "
+            "and then verify it.\n"
+            "```python\n"
+            "edit_file('/testbed/math_utils.py', old_content='return a / b', "
+            "new_content='if b == 0: raise ValueError(\"Zero division\"); "
+            "return a / b')\n"
+            "print('Fixed successfully')\n"
+            "```\n"
+            "Observation from sandbox:\n"
+            "Stdout:\n"
+            "Fixed successfully\n"
+            "...\n"
+            "Thought: The fix is applied and verified."
+            "Now I will get the patch and finish.\n"
+            "```python\n"
+            "patch = get_patch()\n"
+            "final_answer(patch)\n"
+            "```"
         )
 
         super().__init__(
@@ -133,15 +165,28 @@ class SWEBenchOrchestrator(BaseOrchestrator):
                 f"and return the resulting git patch (diff) via final_answer()"
                 f"`git -c core.fileMode=false diff`."
             )
+            mcp_command = "python mcp_tools_swebench.py"
 
-            solution_output = self.run(
-                task_id=task_input.instance_id,
-                initial_task_prompt=initial_prompt,
-                step_metrics_class=StepMetrics,
-                solution_output_class=SolutionOutput
-            )
+            with MCPClient.from_stdio(
+                mcp_command,
+                env={"SWE_CONTAINER": container_name},
+            ) as mcp:
+                tool_funcs = mcp.tool_functions()
 
-            return solution_output
+                with SandboxRunner(functions=tool_funcs) as runner:
 
+                    self.sandbox_runner = runner
+                    if hasattr(runner, "manual") and runner.manual:
+                        self.system_prompt = (
+                            f"{self.system_prompt}\n\n"
+                            f"### Available Tools & Manual:\n{runner.manual}"
+                        )
+
+                    return self.run(
+                        task_id=task_input.instance_id,
+                        initial_task_prompt=initial_prompt,
+                        step_metrics_class=StepMetrics,
+                        solution_output_class=SolutionOutput,
+                    )
         finally:
             self._cleanup_docker_container(container_name)

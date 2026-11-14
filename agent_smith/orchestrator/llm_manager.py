@@ -1,5 +1,3 @@
-# Everything related to the multikey, retry, and OpenAI client can be encapsulated in a helper class
-# agent_smith/orchestrator/llm_manager.py
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -16,7 +14,7 @@ class LLMProviderManager:
     ):
         self.model_name = model_name
         self.default_provider_url = default_provider_url
-        
+
         if providers_config:
             self.providers = providers_config
         else:
@@ -93,7 +91,10 @@ class LLMProviderManager:
                 }
             except Exception as e:
                 attempts += 1
-                print(f"[Warning] LLM error (Attempt {attempts}/{max_attempts}): {e}")
+                print(
+                    "[Warning] LLM error "
+                    f"(Attempt {attempts}/{max_attempts}): {e}"
+                )
                 self.rotate_key_or_provider()
                 if attempts >= max_attempts:
                     raise RuntimeError(

@@ -68,11 +68,16 @@ class BaseOrchestrator(ABC):
             try:
                 elapsed_time = time.time() - start_time
                 if elapsed_time >= self.max_time_seconds:
-                    error_message = f"TimeLimitExceeded: {self.max_time_seconds}s exceeded."
+                    error_message = (
+                        "TimeLimitExceeded: "
+                        f"{self.max_time_seconds}s exceeded."
+                    )
                     break
 
                 if total_input_tokens >= self.max_input_tokens:
-                    error_message = f"TokenBudgetExceeded: Input tokens limit exceeded."
+                    error_message = (
+                        "TokenBudgetExceeded: Input tokens limit exceeded."
+                    )
                     break
 
                 llm_response = self.llm_manager.call_llm(messages)
@@ -85,20 +90,40 @@ class BaseOrchestrator(ABC):
                 total_output_tokens += out_tokens
 
                 if total_output_tokens >= self.max_output_tokens:
-                    error_message = f"TokenBudgetExceeded: Output tokens limit exceeded."
+                    error_message = (
+                        "TokenBudgetExceeded: Output tokens limit exceeded."
+                    )
                     break
 
                 raw_output = llm_response.get("text", "")
                 code_to_run = extract_code(raw_output)
 
-                execution_result: ExecutionResult = self.sandbox_runner.run(code_to_run)
+                formatting_warning = None
+                if code_to_run == raw_output.strip():
+
+                    formatting_warning = (
+                        "[Warning] No executable code block or tool call "
+                        "format was detected in your response. Please ensure "
+                        "you write your Python code inside a ```python ... ```"
+                        "block, or use a valid tool call / ReAct format."
+                    )
+
+                execution_result: ExecutionResult = (
+                    self.sandbox_runner.run(code_to_run)
+                )
 
                 sandbox_output_combined = (
                     f"Stdout:\n{execution_result.stdout}\n"
                     f"Stderr:\n{execution_result.stderr}"
                 )
                 if execution_result.error:
-                    sandbox_output_combined += f"\nError:\n{execution_result.error}"
+                    sandbox_output_combined += (
+                        f"\nError:\n{execution_result.error}"
+                    )
+                if formatting_warning:
+                    sandbox_output_combined = (
+                        f"{formatting_warning}\n\n{sandbox_output_combined}"
+                    )
 
                 active_api_url = (
                     llm_response.get("active_url")
@@ -128,7 +153,9 @@ class BaseOrchestrator(ABC):
                 messages.append({"role": "assistant", "content": raw_output})
                 messages.append({
                     "role": "user",
-                    "content": f"Observation from sandbox:\n{sandbox_output_combined}",
+                    "content": (
+                        f"Observation from sandbox:\n{sandbox_output_combined}"
+                    ),
                 })
 
             except Exception as e:

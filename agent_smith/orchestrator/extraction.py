@@ -39,4 +39,31 @@ def extract_code(llm_output: str) -> str:
             )
             return f"result = {func_name}({args_str})\nprint(result)"
 
+    react_pattern = (
+        r"Action:\s*([a-zA-Z0-9_]+)\s*"
+        r"(?:\\n|\n)\s*"
+        r"Action\s*Input:\s*"
+        r"(.+?)(?:\n|$)"
+    )
+    react_match = re.search(
+        react_pattern,
+        llm_output,
+        re.IGNORECASE | re.DOTALL
+    )
+    if react_match:
+        func_name = react_match.group(1).strip()
+        raw_input = react_match.group(2).strip()
+
+        try:
+            if raw_input.startswith("{") and raw_input.endswith("}"):
+                args_dict = json.loads(raw_input)
+                args_str = ", ".join(
+                    f"{k}={v!r}" for k, v in args_dict.items()
+                )
+                return f"result = {func_name}({args_str})\nprint(result)"
+            else:
+                return f"result = {func_name}({raw_input})\nprint(result)"
+        except Exception:
+            pass
+
     return llm_output.strip()
