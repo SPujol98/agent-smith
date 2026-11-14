@@ -9,7 +9,7 @@ from agent_smith.orchestrator.models import (
     SolutionOutput,
     StepMetrics,
 )
-from agent_smith.sandbox.mcp_client import MCPClient
+
 from agent_smith.sandbox.runner import SandboxRunner
 
 
@@ -85,27 +85,21 @@ class MBPPOrchestrator(BaseOrchestrator):
             f"Test imports: {task_input.test_imports}\n"
             f"Tests to pass:\n" + "\n".join(task_input.test_list)
         )
-        mcp_command = "python mcp_tools_mbpp.py"
+        mcp_stdio_cmd = "python mcp_tools_mbpp.py"
 
         try:
-            with MCPClient.from_stdio(mcp_command) as mcp:
-                tool_funcs = mcp.tool_functions()
+            with SandboxRunner(mcp_stdio=mcp_stdio_cmd) as runner:
+                self.sandbox_runner = runner
+                self.system_prompt += (
+                    f"\n\n### Available functions:\n{runner.manual}"
+                )
 
-                with SandboxRunner(functions=tool_funcs) as runner:
-                    self.sandbox_runner = runner
-
-                    if hasattr(runner, "manual") and runner.manual:
-                        self.system_prompt = (
-                            f"{self.system_prompt}\n\n"
-                            f"### Available Tools & Manual:\n{runner.manual}"
-                        )
-
-                    return self.run(
-                        task_id=str(task_input.task_id),
-                        initial_task_prompt=initial_prompt,
-                        step_metrics_class=StepMetrics,
-                        solution_output_class=SolutionOutput,
-                    )
+                return self.run(
+                    task_id=str(task_input.task_id),
+                    initial_task_prompt=initial_prompt,
+                    step_metrics_class=StepMetrics,
+                    solution_output_class=SolutionOutput,
+                )
         except Exception as e:
             return SolutionOutput(
                 task_id=str(task_input.task_id),

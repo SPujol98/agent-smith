@@ -8,8 +8,8 @@ from agent_smith.orchestrator.models import (
     SolutionOutput,
     StepMetrics
 )
+from datetime import datetime
 from typing import Optional, List, Dict, Any
-from agent_smith.sandbox.mcp_client import MCPClient
 from agent_smith.sandbox.runner import SandboxRunner
 
 
@@ -165,28 +165,42 @@ class SWEBenchOrchestrator(BaseOrchestrator):
                 f"and return the resulting git patch (diff) via final_answer()"
                 f"`git -c core.fileMode=false diff`."
             )
-            mcp_command = "python mcp_tools_swebench.py"
+            mcp_stdio_cmd = "python mcp_tools_swebench.py"
 
-            with MCPClient.from_stdio(
-                mcp_command,
-                env={"SWE_CONTAINER": container_name},
-            ) as mcp:
-                tool_funcs = mcp.tool_functions()
+            with SandboxRunner(
+                mcp_stdio=mcp_stdio_cmd,
+                mcp_env={"SWE_CONTAINER": container_name},
+            ) as runner:
+                self.sandbox_runner = runner
+                self.system_prompt += (
+                    f"\n\n### Available functions:\n{runner.manual}"
+                )
 
-                with SandboxRunner(functions=tool_funcs) as runner:
-
-                    self.sandbox_runner = runner
-                    if hasattr(runner, "manual") and runner.manual:
-                        self.system_prompt = (
-                            f"{self.system_prompt}\n\n"
-                            f"### Available Tools & Manual:\n{runner.manual}"
-                        )
-
-                    return self.run(
-                        task_id=task_input.instance_id,
-                        initial_task_prompt=initial_prompt,
-                        step_metrics_class=StepMetrics,
-                        solution_output_class=SolutionOutput,
-                    )
+                return self.run(
+                    task_id=task_input.instance_id,
+                    initial_task_prompt=initial_prompt,
+                    step_metrics_class=StepMetrics,
+                    solution_output_class=SolutionOutput,
+                )
+        except Exception as e:
+            return SolutionOutput(
+                task_id=str(task_input.instance_id),
+                benchmark=self.benchmark,
+                success=False,
+                solution="",
+                iterations=0,
+                total_requests=0,
+                total_input_tokens=0,
+                total_output_tokens=0,
+                total_time_seconds=0.0,
+                steps=[],
+                system_prompt=self.system_prompt,
+                error=f"MCPConnectionOrSandboxError: {str(e)}",
+                timestamp=(
+                    datetime.now().isoformat()
+                    if "datetime" in globals()
+                    else ""
+                ),
+            )
         finally:
             self._cleanup_docker_container(container_name)
