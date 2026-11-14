@@ -1,13 +1,15 @@
 # Executable CLI script (calls MBPP logic)
 import io
 import json
-import os
 import sys
 from pathlib import Path
 
 import fire
 from dotenv import load_dotenv
-
+from agent_smith.orchestrator.config_api import (
+    get_providers_config,
+    get_default_model
+)
 from agent_smith.evaluation_logging import save_evaluation_logs
 from agent_smith.orchestrator.mbpp import MBPPOrchestrator
 from agent_smith.orchestrator.models import MBPPTaskInput
@@ -32,13 +34,14 @@ def main(
         task_raw_data = json.load(f)
 
     task_input = MBPPTaskInput(**task_raw_data)
-    raw_keys = os.getenv("LLM_API_KEYS", os.getenv("OPENAI_API_KEY", ""))
-    api_keys_list = [k.strip() for k in raw_keys.split(",") if k.strip()]
+    providers_config = get_providers_config()
+    if not model_name:
+        model_name = get_default_model(0)
 
     orchestrator = MBPPOrchestrator(
         model_name=model_name,
+        providers_config=providers_config if providers_config else None,
         default_provider_url=provider_url if provider_url else None,
-        api_keys=api_keys_list if api_keys_list else None,
     )
 
     old_stdout = sys.stdout
