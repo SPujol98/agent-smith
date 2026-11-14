@@ -37,7 +37,7 @@ def main(
 
     orchestrator = MBPPOrchestrator(
         model_name=model_name,
-        default_provider_url=provider_url,
+        default_provider_url=provider_url if provider_url else None,
         api_keys=api_keys_list if api_keys_list else None,
     )
 
