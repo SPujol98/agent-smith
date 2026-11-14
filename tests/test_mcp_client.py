@@ -1,10 +1,12 @@
 """Tests for the synchronous MCP client facade."""
+
 import sys
 from pathlib import Path
 
 import pytest
-from agent_smith.sandbox.mcp_client import MCPClient, MCPConnectionError
 from mcp.server.mcpserver import MCPServer
+
+from agent_smith.sandbox.mcp_client import MCPClient, MCPConnectionError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

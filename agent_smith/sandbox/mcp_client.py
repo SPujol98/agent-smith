@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Any, TypeVar
 
-from mcp import Client, StdioServerParameters
+from mcp import Client, MCPError, StdioServerParameters
 from mcp.types import CallToolResult, Tool
 
 _T = TypeVar("_T")
@@ -55,35 +55,22 @@ class MCPClient:
         self._client: Client | None = None
         self._error: BaseException | None = None
 
-    def _tool_function(self, tool: Tool) -> Callable[..., Any]:
-        """Python function that calls `tool` on the server."""
-        params = list(tool.input_schema.get("properties", {}))
-
-        def call(*args: Any, **kwargs: Any) -> Any:
-            if len(args) > len(params):
-                raise TypeError(
-                    f"{tool.name}() takes {len(params)} arguments "
-                    f"but {len(args)} were given"
-                )
-            arguments = dict(zip(params, args))
-            repeated = arguments.keys() & kwargs.keys()
-            if repeated:
-                raise TypeError(
-                    f"{tool.name}() got multiple values for "
-                    f"{', '.join(sorted(repeated))}"
-                )
-            arguments.update(kwargs)
-            return _result_value(self.call_tool(tool.name, arguments))
-
-        call.__name__ = tool.name
-        call.__doc__ = tool.description
-        return call
-
-    def tool_functions(self) -> dict[str, Callable[..., Any]]:
-        """One Python function per server tool, keyed by tool name."""
-        return {
-            tool.name: self._tool_function(tool) for tool in self.list_tools()
+    def sandbox_functions(self) -> dict[str, Callable[..., Any]]:
+        """Every function the sandbox exposes: server tools + helpers."""
+        helpers: dict[str, Callable[..., Any]] = {
+            "list_resources": self.list_resources,
+            "read_resource": self.read_resource,
+            "list_prompts": self.list_prompts,
+            "get_prompt": self.get_prompt,
         }
+        tools = self.tool_functions()
+        clash = tools.keys() & helpers.keys()
+        if clash:
+            raise MCPConnectionError(
+                "Server tools use names reserved by the sandbox: "
+                f"{', '.join(sorted(clash))}"
+            )
+        return {**helpers, **tools}
 
     @classmethod
     def from_stdio(
@@ -163,19 +150,110 @@ class MCPClient:
         future = asyncio.run_coroutine_threadsafe(runner(), self._loop)
         return future.result(self._timeout)
 
-    def list_tools(self) -> list[Tool]:
-        """Return all the tools of the server, following pagination."""
-        tools: list[Tool] = []
+    def _collect(self, method: str, field: str) -> list[Any]:
+        """All items of a paginated list request (list_resources...)."""
+        items: list[Any] = []
         cursor: str | None = None
         while True:
-            page = self._call(lambda c: c.list_tools(cursor=cursor))
-            tools.extend(page.tools)
+            page = self._call(lambda c: getattr(c, method)(cursor=cursor))
+            items.extend(getattr(page, field))
             cursor = page.next_cursor
             if not cursor:
-                return tools
+                return items
+
+    def list_tools(self) -> list[Tool]:
+        """Return all the tools of the server, following pagination."""
+        return self._collect("list_tools", "tools")
 
     def call_tool(
         self, name: str, arguments: dict[str, Any]
     ) -> CallToolResult:
         """Call a tool and return the raw MCP result."""
         return self._call(lambda c: c.call_tool(name, arguments))
+
+    def _tool_function(self, tool: Tool) -> Callable[..., Any]:
+        """Python function that calls `tool` on the server."""
+        params = list(tool.input_schema.get("properties", {}))
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            if len(args) > len(params):
+                raise TypeError(
+                    f"{tool.name}() takes {len(params)} arguments "
+                    f"but {len(args)} were given"
+                )
+            arguments = dict(zip(params, args))
+            repeated = arguments.keys() & kwargs.keys()
+            if repeated:
+                raise TypeError(
+                    f"{tool.name}() got multiple values for "
+                    f"{', '.join(sorted(repeated))}"
+                )
+            arguments.update(kwargs)
+            return _result_value(self.call_tool(tool.name, arguments))
+
+        call.__name__ = tool.name
+        call.__doc__ = tool.description
+        return call
+
+    def tool_functions(self) -> dict[str, Callable[..., Any]]:
+        """One Python function per server tool, keyed by tool name."""
+        return {
+            tool.name: self._tool_function(tool) for tool in self.list_tools()
+        }
+
+    def list_resources(self) -> list[dict[str, str]]:
+        """Resources (and resource templates) offered by the server."""
+        resources = [
+            {
+                "uri": str(r.uri),
+                "name": r.name,
+                "description": r.description or "",
+            }
+            for r in self._collect("list_resources", "resources")
+        ]
+        templates = [
+            {
+                "uri": t.uri_template,
+                "name": t.name,
+                "description": t.description or "",
+            }
+            for t in self._collect(
+                "list_resource_templates", "resource_templates"
+            )
+        ]
+        return resources + templates
+
+    def read_resource(self, uri: str) -> str:
+        """Text content of a resource."""
+        try:
+            result = self._call(lambda c: c.read_resource(uri))
+        except MCPError as exc:
+            raise MCPToolError(str(exc)) from exc
+        return "\n".join(
+            getattr(item, "text", None)
+            or f"[binary content: {item.mime_type}]"
+            for item in result.contents
+        )
+
+    def list_prompts(self) -> list[dict[str, Any]]:
+        """Prompts offered by the server, with their argument names."""
+        return [
+            {
+                "name": p.name,
+                "description": p.description or "",
+                "arguments": [a.name for a in p.arguments or []],
+            }
+            for p in self._collect("list_prompts", "prompts")
+        ]
+
+    def get_prompt(self, name: str, **arguments: str) -> str:
+        """Render a prompt as text ("role: message" per line)."""
+        try:
+            result = self._call(lambda c: c.get_prompt(name, arguments))
+        except MCPError as exc:
+            raise MCPToolError(str(exc)) from exc
+        return "\n".join(
+            f"{m.role}: "
+            + getattr(m.content, "text", f"[{m.content.type} content]")
+            for m in result.messages
+        )
