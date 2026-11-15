@@ -7,11 +7,11 @@ from pathlib import Path
 import fire
 from dotenv import load_dotenv
 
-from agent_smith.orchestrator.config_api import (
-    get_providers_config,
-    get_default_model
-)
 from agent_smith.evaluation_logging import save_evaluation_logs
+from agent_smith.orchestrator.config_api import (
+    get_default_model,
+    get_providers_config,
+)
 from agent_smith.orchestrator.models import SWEBenchTaskInput
 from agent_smith.orchestrator.swebench import SWEBenchOrchestrator
 

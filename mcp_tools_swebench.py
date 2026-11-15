@@ -1,67 +1,128 @@
 import os
 import re
 import subprocess
-from pathlib import Path
-from typing import Callable
+from pathlib import Path, PurePosixPath
 
 from mcp.server.mcpserver import MCPServer
-
-from agent_smith.sandbox.security import FileSystemGuard, SecurityError
 
 # MCP Server instance
 mcp = MCPServer("swebench-tools")
 
 ALLOWED_DIRECTORIES: list[str] = ["/testbed", "/tmp/agent"]
+CONTAINER_WORKDIR = "/testbed"
+
+
+def _exec(
+    args: list[str],
+    *,
+    stdin: str | None = None,
+    cwd: str | None = None,
+    timeout: float = 60,
+) -> subprocess.CompletedProcess[str]:
+    """Run a command in the task's container, or locally if there is none.
+
+    The container comes from the SWE_CONTAINER environment variable. Tools
+    only build commands; this is the single place that decides where they
+    run.
+    """
+    container = os.environ.get("SWE_CONTAINER")
+    if container:
+        args = [
+            "docker",
+            "exec",
+            "-i",
+            "-w",
+            cwd or CONTAINER_WORKDIR,
+            container,
+            *args,
+        ]
+        cwd = None
+    return subprocess.run(
+        args,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=cwd,
+        timeout=timeout,
+    )
+
+
+def _resolve_paths(*paths: str | Path) -> list[PurePosixPath]:
+    """Canonical absolute paths, resolved where the commands run.
+
+    `realpath -m` follows symlinks and normalises `..` inside the container
+    (or locally), and also accepts paths that do not exist yet.
+    """
+    proc = _exec(["realpath", "-m", "--", *map(str, paths)], timeout=10)
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.strip() or "realpath failed")
+    return [PurePosixPath(line) for line in proc.stdout.splitlines()]
 
 
 def _check_path(path: str | Path) -> str | None:
+    """Error message if `path` is outside ALLOWED_DIRECTORIES, else None."""
     try:
-        guard = FileSystemGuard(allowed_directories=ALLOWED_DIRECTORIES)
-        guard.validate_path(path)
+        target, *allowed = _resolve_paths(path, *ALLOWED_DIRECTORIES)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Error: could not resolve path '{path}': {e}"
+    if any(target.is_relative_to(directory) for directory in allowed):
         return None
-    except SecurityError as e:
-        return f"Error: {e}"
+    return (
+        f"Error: Access denied: '{path}' (resolved to '{target}') "
+        "is outside allowed directories."
+    )
 
 
-def _get_search_root() -> tuple[Path | None, str | None]:
-    root_path = Path.cwd().resolve()
-    if err := _check_path(root_path):
-        return None, err
-    return root_path, None
+def _read_text(filepath: str) -> str:
+    """Content of a file, read where the commands run."""
+    proc = _exec(["cat", "--", filepath], timeout=30)
+    if proc.returncode != 0:
+        raise FileNotFoundError(proc.stderr.strip())
+    return proc.stdout
 
 
-def _search_workspace(
-    file_pattern: str,
-    match_predicate: Callable[[str], bool],
-    no_matches_msg: str = "No matches found.",
-) -> str:
-    root, err = _get_search_root()
-    if root is None:
-        return err or "Error: Search root path is not allowed."
-    guard = FileSystemGuard(allowed_directories=ALLOWED_DIRECTORIES)
-    matches: list[str] = []
-    for file_path in root.rglob(file_pattern):
-        if ".git" in file_path.parts:
-            continue
-        if not file_path.is_file():
-            continue
-        try:
-            guard.validate_path(file_path)
-        except SecurityError:
-            continue
-        try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                for line_num, line in enumerate(f, start=1):
-                    if match_predicate(line):
-                        clean_line = line.rstrip("\r\n")
-                        matches.append(
-                            f"{file_path.resolve()}:{line_num} {clean_line}"
-                        )
-        except OSError:
-            continue
-    if not matches:
-        return no_matches_msg
-    return "\n".join(matches)
+def _format_match(line: str) -> str:
+    """Turn grep's 'path:num:text' into the tools' 'path:num text'."""
+    path, num, text = line.split(":", 2)
+    return f"{path}:{num} {text}"
+
+
+def _grep(grep_args: list[str], file_pattern: str, no_matches: str) -> str:
+    """Search the workspace with grep, where the commands run."""
+    try:
+        (root,) = _resolve_paths(".")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Error: could not resolve the search root: {e}"
+    if err := _check_path(str(root)):
+        return err
+    command = [
+        "grep",
+        "-rnIH",
+        "--exclude-dir=.git",
+        f"--include={file_pattern}",
+        *grep_args,
+        "--",
+        str(root),
+    ]
+    try:
+        proc = _exec(command, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Error searching the workspace: {e}"
+    if proc.returncode > 1 and not proc.stdout:
+        return f"Error searching the workspace: {proc.stderr.strip()}"
+    matches = [_format_match(line) for line in proc.stdout.splitlines()]
+    return "\n".join(matches) or no_matches
+
+
+def _command_output(proc: subprocess.CompletedProcess[str]) -> str:
+    """Exit code, stdout and stderr of a command, for the agent."""
+    return (
+        f"Exit code: {proc.returncode}\n"
+        f"STDOUT: {proc.stdout}\n"
+        f"STDERR: {proc.stderr}"
+    )
 
 
 @mcp.tool()
@@ -70,22 +131,17 @@ def read_file(filepath: str, start_line: int, end_line: int) -> str:
     if err := _check_path(filepath):
         return err
     try:
-        with open(
-            Path(filepath), "r", encoding="utf-8", errors="replace"
-        ) as f:
-            lines = f.read().splitlines()
-            slice_lines = lines[max(1, start_line) - 1: end_line]
-            formatted = [
-                f"{num}: {line}"
-                for num, line in enumerate(
-                    slice_lines, start=max(1, start_line)
-                )
-            ]
-            return "\n".join(formatted)
+        lines = _read_text(filepath).splitlines()
     except FileNotFoundError:
         return f"Error: File '{filepath}' not found."
-    except Exception as e:
-        return f"Error: File '{filepath}' not found: {e}."
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Error reading file '{filepath}': {e}"
+    first = max(1, start_line)
+    start = first - 1
+    numbered = []
+    for num, line in enumerate(lines[start: end_line], start=first):
+        numbered.append(f"{num}: {line}")
+    return "\n".join(numbered)
 
 
 @mcp.tool()
@@ -94,17 +150,25 @@ def edit_file(filepath: str, old_str: str, new_str: str) -> str:
     if err := _check_path(filepath):
         return err
     try:
-        path = Path(filepath)
-        if not path.is_file():
-            return f"Error: File '{filepath}' not found."
-        content = path.read_text(encoding="utf-8")
-        if old_str not in content:
-            return f"Error: String '{old_str}' not found in '{filepath}'."
-        new_content = content.replace(old_str, new_str, 1)
-        path.write_text(new_content, encoding="utf-8")
-        return f"Successfully updated '{filepath}'."
-    except Exception as e:
+        content = _read_text(filepath)
+    except FileNotFoundError:
+        return f"Error: File '{filepath}' not found."
+    except (OSError, subprocess.TimeoutExpired) as e:
         return f"Error editing file '{filepath}': {e}"
+    if old_str not in content:
+        return f"Error: String '{old_str}' not found in '{filepath}'."
+    new_content = content.replace(old_str, new_str, 1)
+    try:
+        proc = _exec(
+            ["sh", "-c", 'cat > "$1"', "sh", filepath],
+            stdin=new_content,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"Error editing file '{filepath}': {e}"
+    if proc.returncode != 0:
+        return f"Error editing file '{filepath}': {proc.stderr.strip()}"
+    return f"Successfully updated '{filepath}'."
 
 
 @mcp.tool()
@@ -113,48 +177,50 @@ def list_files(directory: str, pattern: str) -> str:
     if err := _check_path(directory):
         return err
     try:
-        path = Path(directory)
-        if not path.is_dir():
-            return f"Error: Directory '{directory}' not found."
-        matches = [item.name for item in path.glob(pattern) if item.is_file()]
-        if not matches:
-            return f"No files matched pattern '{pattern}' in '{directory}'."
-        return "\n".join(matches)
-    except Exception as e:
+        proc = _exec(
+            [
+                "find",
+                directory,
+                "-maxdepth",
+                "1",
+                "-type",
+                "f",
+                "-name",
+                pattern,
+            ],
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
         return f"Error listing files: {e}"
+    if proc.returncode != 0:
+        return f"Error: Directory '{directory}' not found."
+    names = []
+    for line in proc.stdout.splitlines():
+        names.append(PurePosixPath(line).name)
+    names = sorted(names)
+    if not names:
+        return f"No files matched pattern '{pattern}' in '{directory}'."
+    return "\n".join(names)
 
 
 @mcp.tool()
 def search_code(pattern: str, file_pattern: str = "*") -> str:
     """Search for pattern across files matching file_pattern in workspace."""
-    return _search_workspace(
-        file_pattern=file_pattern,
-        match_predicate=lambda line: pattern in line,
-        no_matches_msg=f"No matches found for pattern '{pattern}'",
+    return _grep(
+        ["-F", "-e", pattern],
+        file_pattern,
+        f"No matches found for pattern '{pattern}'",
     )
 
 
 @mcp.tool()
 def search_function_or_class_definition_in_code(name: str) -> str:
-    """Search for the definition of a function or class across
-    the workspace."""
-
-    def is_definition(line: str) -> bool:
-        s = line.strip()
-        return (
-            s.startswith(f"def {name}(")
-            or s.startswith(f"def {name} ")
-            or s.startswith(f"async def {name}(")
-            or s.startswith(f"async def {name} ")
-            or s.startswith(f"class {name}:")
-            or s.startswith(f"class {name}(")
-            or s.startswith(f"class {name} ")
-        )
-
-    return _search_workspace(
-        file_pattern="*.py",
-        match_predicate=is_definition,
-        no_matches_msg=f"No matches found for function/class '{name}'",
+    """Search for the definition of a function or class in the workspace."""
+    regex = rf"^\s*(async\s+)?(def|class)\s+{re.escape(name)}\b"
+    return _grep(
+        ["-E", "-e", regex],
+        "*.py",
+        f"No matches found for function/class '{name}'",
     )
 
 
@@ -164,74 +230,56 @@ def find_references(name: str, filepath: str = "", line: int = 0) -> str:
     if filepath:
         if err := _check_path(filepath):
             return err
-
-    regex = re.compile(rf"\b{re.escape(name)}\b")
-    return _search_workspace(
-        file_pattern="*.py",
-        match_predicate=lambda testing: bool(regex.search(testing)),
-        no_matches_msg=f"No references found for '{name}'",
+    return _grep(
+        ["-w", "-F", "-e", name],
+        "*.py",
+        f"No references found for '{name}'",
     )
 
 
 @mcp.tool()
 def run_command(command: str, workdir: str = ".") -> str:
     """Execute a shell command in the specified working directory."""
-    if err := _check_path(workdir):
+    if workdir != "." and (err := _check_path(workdir)):
         return err
     try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
+        proc = _exec(
+            ["sh", "-c", command],
+            cwd=None if workdir == "." else workdir,
             timeout=60,
-        )
-        return (
-            f"Exit code: {proc.returncode}\n"
-            f"STDOUT: {proc.stdout}\n"
-            f"STDERR: {proc.stderr}"
         )
     except subprocess.TimeoutExpired:
         return "Error: Command timed out after 60 seconds."
-    except Exception as e:
+    except OSError as e:
         return f"Error executing command: {e}"
+    return _command_output(proc)
 
 
 @mcp.tool()
 def get_patch() -> str:
     """Retrieve the unified git diff of all changes made to the repository."""
     try:
-        cmd = "git -c core.fileMode=false diff"
-        proc = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
-        )
-        if proc.returncode == 0:
-            return proc.stdout
-        return f"Error getting git patch: {proc.stderr}"
-    except Exception as e:
+        proc = _exec(["git", "-c", "core.fileMode=false", "diff"], timeout=30)
+    except (subprocess.TimeoutExpired, OSError) as e:
         return f"Error getting git patch: {e}"
+    if proc.returncode != 0:
+        return f"Error getting git patch: {proc.stderr}"
+    return proc.stdout
 
 
 @mcp.tool()
 def run_tests() -> str:
     """Execute the repository evaluation script or test suite."""
+    command = os.environ.get("SWE_BENCH_TEST_CMD") or (
+        "if [ -f /eval.sh ]; then bash /eval.sh; else pytest; fi"
+    )
     try:
-        cmd = os.environ.get("SWE_BENCH_TEST_CMD")
-        if not cmd:
-            cmd = "bash /eval.sh" if Path("/eval.sh").exists() else "pytest"
-        proc = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=300
-        )
-        return (
-            f"Exit code: {proc.returncode}\n"
-            f"STDOUT: {proc.stdout}\n"
-            f"STDERR: {proc.stderr}"
-        )
+        proc = _exec(["sh", "-c", command], timeout=300)
     except subprocess.TimeoutExpired:
         return "Error: Command timed out after 300 seconds."
-    except Exception as e:
+    except OSError as e:
         return f"Error executing tests: {e}"
+    return _command_output(proc)
 
 
 if __name__ == "__main__":
