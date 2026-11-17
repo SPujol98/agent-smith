@@ -4,11 +4,11 @@ from abc import ABC
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from agent_smith.orchestrator.extraction import extract_code
+from agent_smith.orchestrator.llm_manager import LLMProviderManager
 from agent_smith.orchestrator.models import SolutionOutput, StepMetrics
 from agent_smith.sandbox.result import ExecutionResult
 from agent_smith.sandbox.runner import SandboxRunner
-from agent_smith.orchestrator.extraction import extract_code
-from agent_smith.orchestrator.llm_manager import LLMProviderManager
 
 
 class BaseOrchestrator(ABC):
@@ -24,7 +24,7 @@ class BaseOrchestrator(ABC):
         max_input_tokens: int = 100000,
         max_output_tokens: int = 10000,
         max_time_seconds: float = 300.0,
-    ):
+    ) -> None:
         self.model_name = model_name
         self.system_prompt = system_prompt
         self.benchmark = benchmark
@@ -45,8 +45,8 @@ class BaseOrchestrator(ABC):
         self,
         task_id: str,
         initial_task_prompt: str,
-        step_metrics_class: StepMetrics,
-        solution_output_class: SolutionOutput,
+        step_metrics_class: type[StepMetrics],
+        solution_output_class: type[SolutionOutput],
     ) -> SolutionOutput:
 
         messages = [
@@ -100,7 +100,6 @@ class BaseOrchestrator(ABC):
 
                 formatting_warning = None
                 if code_to_run == raw_output.strip():
-
                     formatting_warning = (
                         "[Warning] No executable code block or tool call "
                         "format was detected in your response. Please ensure "
@@ -108,8 +107,8 @@ class BaseOrchestrator(ABC):
                         "block, or use a valid tool call / ReAct format."
                     )
 
-                execution_result: ExecutionResult = (
-                    self.sandbox_runner.run(code_to_run)
+                execution_result: ExecutionResult = self.sandbox_runner.run(
+                    code_to_run
                 )
 
                 sandbox_output_combined = (
@@ -147,16 +146,19 @@ class BaseOrchestrator(ABC):
 
                 if execution_result.is_finished:
                     success = True
-                    final_solution = execution_result.final_answer_value
+                    final_solution = execution_result.final_answer_value or ""
                     break
 
                 messages.append({"role": "assistant", "content": raw_output})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        f"Observation from sandbox:\n{sandbox_output_combined}"
-                    ),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Observation from sandbox:\n"
+                            f"{sandbox_output_combined}"
+                        ),
+                    }
+                )
 
             except Exception as e:
                 error_message = str(e)

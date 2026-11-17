@@ -2,14 +2,15 @@
 # from base import BaseOrchestrator
 import subprocess
 import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from agent_smith.orchestrator.base_orchestrator import BaseOrchestrator
 from agent_smith.orchestrator.models import (
-    SWEBenchTaskInput,
     SolutionOutput,
-    StepMetrics
+    StepMetrics,
+    SWEBenchTaskInput,
 )
-from datetime import datetime
-from typing import Optional, List, Dict, Any
 from agent_smith.sandbox.runner import SandboxRunner
 
 
@@ -18,6 +19,7 @@ class SWEBenchOrchestrator(BaseOrchestrator):
     Specialized orchestrator for managing SWE-bench tasks
     (resolving actual bugs in repositories and generating Git patches).
     """
+
     def __init__(
         self,
         model_name: str,
@@ -56,7 +58,7 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             "and then verify it.\n"
             "```python\n"
             "edit_file('/testbed/math_utils.py', old_content='return a / b', "
-            "new_content='if b == 0: raise ValueError(\"Zero division\"); "
+            'new_content=\'if b == 0: raise ValueError("Zero division"); '
             "return a / b')\n"
             "print('Fixed successfully')\n"
             "```\n"
@@ -85,7 +87,9 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             max_time_seconds=900.0,
         )
 
-    def _start_docker_container(self, docker_image: str, container_name: str):
+    def _start_docker_container(
+        self, docker_image: str, container_name: str
+    ) -> None:
         """Start the Docker container in the background for the task."""
 
         print(
@@ -101,7 +105,7 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             container_name,
             docker_image,
             "sleep",
-            "infinity"
+            "infinity",
         ]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -111,17 +115,12 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             )
         print(f"[Docker] Container {container_name} started successfully.")
 
-    def _cleanup_docker_container(self, container_name: str):
+    def _cleanup_docker_container(self, container_name: str) -> None:
         """Required: Clean and empty the trash can when you're done."""
 
         print(f"[Docker] Cleaning and Deleting a Container {container_name}")
 
-        cmd = [
-            "docker",
-            "rm",
-            "-f",
-            container_name
-        ]
+        cmd = ["docker", "rm", "-f", container_name]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:

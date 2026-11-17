@@ -1,5 +1,6 @@
 import os
 from typing import Any, Dict, List
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,32 +31,42 @@ def get_providers_config() -> List[Dict[str, Any]]:
     providers_config: List[Dict[str, Any]] = []
 
     if openrouter_keys:
-        providers_config.append({
-            "url": "https://openrouter.ai/api/v1",
-            "keys": openrouter_keys,
-            "default_model": "deepseek/deepseek-chat",
-        })
+        providers_config.append(
+            {
+                "url": "https://openrouter.ai/api/v1",
+                "keys": openrouter_keys,
+                "default_model": "deepseek/deepseek-chat",
+            }
+        )
 
     if groq_keys:
-        providers_config.append({
-            "url": "https://api.groq.com/openai/v1",
-            "keys": groq_keys,
-            "default_model": "llama-3.3-70b-versatile",
-        })
+        providers_config.append(
+            {
+                "url": "https://api.groq.com/openai/v1",
+                "keys": groq_keys,
+                "default_model": "llama-3.3-70b-versatile",
+            }
+        )
 
     if gemini_keys:
-        providers_config.append({
-            "url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "keys": gemini_keys,
-            "default_model": "gemini-2.5-flash",
-        })
+        providers_config.append(
+            {
+                "url": (
+                    "https://generativelanguage.googleapis.com/v1beta/openai/"
+                ),
+                "keys": gemini_keys,
+                "default_model": "gemini-2.5-flash",
+            }
+        )
 
     if openai_keys:
-        providers_config.append({
-            "url": "https://api.openai.com/v1",
-            "keys": openai_keys,
-            "default_model": "gpt-6-luna",
-        })
+        providers_config.append(
+            {
+                "url": "https://api.openai.com/v1",
+                "keys": openai_keys,
+                "default_model": "gpt-6-luna",
+            }
+        )
 
     return providers_config
 
@@ -67,5 +78,7 @@ def get_default_model(provider_index: int = 0) -> str:
     """
     config = get_providers_config()
     if config and len(config) > provider_index:
-        return config[provider_index].get("default_model", "gpt-6-luna")
+        model = config[provider_index].get("default_model")
+        if isinstance(model, str):
+            return model
     return "gpt-6-luna"

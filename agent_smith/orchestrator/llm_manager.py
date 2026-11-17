@@ -1,7 +1,9 @@
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
+
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 
 class LLMProviderManager:
@@ -11,7 +13,7 @@ class LLMProviderManager:
         default_provider_url: Optional[str] = None,
         providers_config: Optional[List[Dict[str, Any]]] = None,
         api_keys: Optional[List[str]] = None,
-    ):
+    ) -> None:
         self.model_name = model_name
         self.default_provider_url = default_provider_url
 
@@ -69,7 +71,7 @@ class LLMProviderManager:
                 client = self._get_active_client()
                 response = client.chat.completions.create(
                     model=self.model_name,
-                    messages=messages,
+                    messages=cast(list[ChatCompletionMessageParam], messages),
                     temperature=0.2,
                     stop=["</end_code>", "<end_code>", "</tool_call>"],
                 )
@@ -101,3 +103,4 @@ class LLMProviderManager:
                         f"Total failure: All providers exhausted: {str(e)}"
                     )
                 time.sleep(backoff_factor ** (attempts % 3))
+        raise RuntimeError("No API keys configured for any LLM provider.")

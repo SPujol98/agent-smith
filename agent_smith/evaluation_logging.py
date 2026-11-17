@@ -11,10 +11,10 @@ from typing import Any
 def save_evaluation_logs(
     benchmark: str,
     task_id: str,
-    task_raw_data: dict,
+    task_raw_data: dict[str, Any],
     solution_output: Any,
     stdout_content: str = "",
-    stderr_content: str = ""
+    stderr_content: str = "",
 ) -> Path:
     """
     Store the structured evaluation logs under:
