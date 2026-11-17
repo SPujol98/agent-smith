@@ -3,7 +3,7 @@ import builtins
 import socket
 from collections.abc import Sequence
 from pathlib import Path
-from types import TracebackType
+from types import ModuleType, TracebackType
 from typing import Any
 
 _real_open = builtins.open
@@ -211,6 +211,28 @@ class FileSystemGuard:
         return _real_open(target, *args, **kwargs)
 
 
+def _restricted_module(
+    module: ModuleType,
+    authorized_imports: list[str],
+    seen: dict[str, ModuleType] | None = None,
+) -> ModuleType:
+    """Copy of a module without private names or unauthorized modules."""
+    seen = {} if seen is None else seen
+    if module.__name__ in seen:
+        return seen[module.__name__]
+    safe = ModuleType(module.__name__, module.__doc__)
+    seen[module.__name__] = safe
+    for name, value in vars(module).items():
+        if name.startswith("_"):
+            continue
+        if isinstance(value, ModuleType):
+            if not is_module_allowed(value.__name__, authorized_imports):
+                continue
+            value = _restricted_module(value, authorized_imports, seen)
+        setattr(safe, name, value)
+    return safe
+
+
 class BuiltinsGuard:
     """Constructs the sandbox builtins dictionary (allowlist approach)."""
 
@@ -236,7 +258,8 @@ class BuiltinsGuard:
             raise SecurityError("Relative imports not allowed")
         if not is_module_allowed(name, self.authorized_imports):
             raise SecurityError(f"Import of module '{name}' is forbidden")
-        return _real_import(name, globals, locals, fromlist, level)
+        module = _real_import(name, globals, locals, fromlist, level)
+        return _restricted_module(module, self.authorized_imports)
 
     def build_builtins(self) -> dict[str, Any]:
         """Build the sandbox builtins from the allowlist.

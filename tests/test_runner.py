@@ -369,14 +369,14 @@ def test_runner_reports_child_that_dies_without_result() -> None:
     runner = SandboxRunner(authorized_imports=["os"])
 
     # Act
-    result = runner.run("import os\nprint('bye')\nos._exit(3)")
+    result = runner.run("import os\nprint('bye')\nos.kill(os.getpid(), 9)")
 
     # Assert
     assert result.success is False
     assert result.stdout == "bye\n"
     assert result.error is not None
     assert "terminated unexpectedly" in result.error
-    assert "exit code 3" in result.error
+    assert "exit code -9" in result.error
 
 
 def test_runner_propagates_system_exit() -> None:
