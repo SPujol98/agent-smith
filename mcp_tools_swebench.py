@@ -10,6 +10,7 @@ mcp = MCPServer("swebench-tools")
 
 ALLOWED_DIRECTORIES: list[str] = ["/testbed", "/tmp/agent"]
 CONTAINER_WORKDIR = "/testbed"
+MAX_OUTPUT_CHARS = 10_000
 
 
 def _exec(
@@ -75,6 +76,18 @@ def _check_path(path: str | Path) -> str | None:
     )
 
 
+def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    """Keep the start and the end of a long text, with a note in between."""
+    if len(text) < limit:
+        return text
+    half = limit // 2
+    omitted = len(text) - 2 * half
+    return (
+        f"{text[:half]}\n... [{omitted} characters truncated; narrow the "
+        f"command, the search or the line range] ...\n{text[-half:]}"
+    )
+
+
 def _read_text(filepath: str) -> str:
     """Content of a file, read where the commands run."""
     proc = _exec(["cat", "--", filepath], timeout=30)
@@ -113,14 +126,14 @@ def _grep(grep_args: list[str], file_pattern: str, no_matches: str) -> str:
     if proc.returncode > 1 and not proc.stdout:
         return f"Error searching the workspace: {proc.stderr.strip()}"
     matches = [_format_match(line) for line in proc.stdout.splitlines()]
-    return "\n".join(matches) or no_matches
+    return _truncate("\n".join(matches) or no_matches)
 
 
 def _command_output(proc: subprocess.CompletedProcess[str]) -> str:
     """Exit code, stdout and stderr of a command, for the agent."""
     return (
         f"Exit code: {proc.returncode}\n"
-        f"STDOUT: {proc.stdout}\n"
+        f"STDOUT: {_truncate(proc.stdout)}\n"
         f"STDERR: {proc.stderr}"
     )
 
@@ -141,7 +154,7 @@ def read_file(filepath: str, start_line: int, end_line: int) -> str:
     numbered = []
     for num, line in enumerate(lines[start: end_line], start=first):
         numbered.append(f"{num}: {line}")
-    return "\n".join(numbered)
+    return _truncate("\n".join(numbered))
 
 
 @mcp.tool()
@@ -200,7 +213,7 @@ def list_files(directory: str, pattern: str) -> str:
     names = sorted(names)
     if not names:
         return f"No files matched pattern '{pattern}' in '{directory}'."
-    return "\n".join(names)
+    return _truncate("\n".join(names))
 
 
 @mcp.tool()
