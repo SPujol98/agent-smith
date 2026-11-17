@@ -78,7 +78,7 @@ def _check_path(path: str | Path) -> str | None:
 
 def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     """Keep the start and the end of a long text, with a note in between."""
-    if len(text) < limit:
+    if len(text) <= limit:
         return text
     half = limit // 2
     omitted = len(text) - 2 * half
@@ -134,7 +134,7 @@ def _command_output(proc: subprocess.CompletedProcess[str]) -> str:
     return (
         f"Exit code: {proc.returncode}\n"
         f"STDOUT: {_truncate(proc.stdout)}\n"
-        f"STDERR: {proc.stderr}"
+        f"STDERR: {_truncate(proc.stderr)}"
     )
 
 
@@ -152,7 +152,7 @@ def read_file(filepath: str, start_line: int, end_line: int) -> str:
     first = max(1, start_line)
     start = first - 1
     numbered = []
-    for num, line in enumerate(lines[start: end_line], start=first):
+    for num, line in enumerate(lines[start:end_line], start=first):
         numbered.append(f"{num}: {line}")
     return _truncate("\n".join(numbered))
 
