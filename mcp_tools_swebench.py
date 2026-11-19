@@ -13,6 +13,20 @@ CONTAINER_WORKDIR = "/testbed"
 MAX_OUTPUT_CHARS = 10_000
 
 
+def _workdir(cwd: str | None, in_container: bool) -> str | None:
+    """Working directory of a command, relative to the repository root.
+
+    The root is TESTBED_PATH if set; else /testbed in the container, and
+    the current directory locally. Absolute directories are kept.
+    """
+    root = os.environ.get("TESTBED_PATH") or (
+        CONTAINER_WORKDIR if in_container else None
+    )
+    if root is None:
+        return cwd
+    return os.path.join(root, cwd) if cwd else root
+
+
 def _exec(
     args: list[str],
     *,
@@ -27,17 +41,18 @@ def _exec(
     run.
     """
     container = os.environ.get("SWE_CONTAINER")
+    workdir = _workdir(cwd, in_container=bool(container))
     if container:
         args = [
             "docker",
             "exec",
             "-i",
             "-w",
-            cwd or CONTAINER_WORKDIR,
+            workdir or CONTAINER_WORKDIR,
             container,
             *args,
         ]
-        cwd = None
+        workdir = None
     return subprocess.run(
         args,
         input=stdin,
@@ -45,7 +60,7 @@ def _exec(
         text=True,
         encoding="utf-8",
         errors="replace",
-        cwd=cwd,
+        cwd=workdir,
         timeout=timeout,
     )
 
@@ -62,10 +77,16 @@ def _resolve_paths(*paths: str | Path) -> list[PurePosixPath]:
     return [PurePosixPath(line) for line in proc.stdout.splitlines()]
 
 
+def _allowed_directories() -> list[str]:
+    """ALLOWED_DIRECTORIES plus the repository given in TESTBED_PATH."""
+    root = os.environ.get("TESTBED_PATH")
+    return [*ALLOWED_DIRECTORIES, root] if root else ALLOWED_DIRECTORIES
+
+
 def _check_path(path: str | Path) -> str | None:
     """Error message if `path` is outside ALLOWED_DIRECTORIES, else None."""
     try:
-        target, *allowed = _resolve_paths(path, *ALLOWED_DIRECTORIES)
+        target, *allowed = _resolve_paths(path, *_allowed_directories())
     except (OSError, subprocess.TimeoutExpired) as e:
         return f"Error: could not resolve path '{path}': {e}"
     if any(target.is_relative_to(directory) for directory in allowed):
