@@ -1,0 +1,10 @@
+{
+  "task_id": 1,
+  "task_definition": "Write a python function to find the minimum cost path in a given list of lists or perform a simple addition.",
+  "function_definition": "def add_nums(a: int, b: int) -> int:",
+  "test_imports": ["import math"],
+  "test_list": [
+    "assert add_nums(2, 3) == 5",
+    "assert add_nums(-1, 1) == 0"
+  ]
+}

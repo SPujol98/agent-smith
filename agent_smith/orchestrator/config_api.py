@@ -44,7 +44,7 @@ def get_providers_config() -> List[Dict[str, Any]]:
             {
                 "url": "https://api.groq.com/openai/v1",
                 "keys": groq_keys,
-                "default_model": "llama-3.3-70b-versatile",
+                "default_model": "qwen/qwen3.8-27b",
             }
         )
 
