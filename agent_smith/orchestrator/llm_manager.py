@@ -14,6 +14,7 @@ class LLMProviderManager:
         providers_config: Optional[List[Dict[str, Any]]] = None,
         api_keys: Optional[List[str]] = None,
     ) -> None:
+    	self._explicit_model = model_name
         self.model_name = model_name
         self.default_provider_url = default_provider_url
 
@@ -26,12 +27,15 @@ class LLMProviderManager:
                     "keys": (
                         api_keys
                         if api_keys
-                        else [os.getenv("OPENAI_API_KEY", "dummy-key")]
+                        else [os.getenv("OPENAI_API_KEYS", "dummy-key")]
                     ),
                 }
             ]
         self._current_provider_index = 0
         self._current_key_index = 0
+        first_default = self.providers[0].get("default_model")
+        if not self.model_name and first_default:
+            self.model_name = first_default
 
     def _get_active_client(self) -> OpenAI:
         prov = self.providers[self._current_provider_index]
@@ -53,6 +57,12 @@ class LLMProviderManager:
             self._current_provider_index = (
                 self._current_provider_index + 1
             ) % len(self.providers)
+            new_prov = self.providers[self._current_provider_index]
+            new_default_model = new_prov.get("default_model")
+            if new_default_model:
+                self.model_name = new_default_model
+            else:
+                self.model_name = self._explicit_model
             print(
                 "[Provider Fallback] Switching index providers "
                 f"{old_prov_idx} to {self._current_provider_index}"
@@ -65,6 +75,7 @@ class LLMProviderManager:
         attempts = 0
         backoff_factor = 2
         start_time = time.time()
+        errors_history: List[str] = []
 
         while attempts < max_attempts:
             try:
@@ -93,14 +104,24 @@ class LLMProviderManager:
                 }
             except Exception as e:
                 attempts += 1
+                active_prov = self.providers[self._current_provider_index]
+                prov_url = active_prov.get("url") or "default_openai"
+                error_summary = (
+                    f"[attempt {attempts}/{max_attempts} | "
+                    f"prov={self._current_provider_index} ({prov_url}) | "
+                    f"model={self.model_name}] {e}"
+                )
+                errors_history.append(error_summary)
                 print(
                     "[Warning] LLM error "
                     f"(Attempt {attempts}/{max_attempts}): {e}"
                 )
                 self.rotate_key_or_provider()
                 if attempts >= max_attempts:
+                    first_err = errors_history[0]
+                    last_err = errors_history[-1]
                     raise RuntimeError(
-                        f"Total failure: All providers exhausted: {str(e)}"
+                        "Total failure: All providers exhausted. "
+                        f"First error: {first_err} || Last error: {last_err}"
                     )
                 time.sleep(backoff_factor ** (attempts % 3))
-        raise RuntimeError("No API keys configured for any LLM provider.")

@@ -26,7 +26,7 @@ def get_providers_config() -> List[Dict[str, Any]]:
     openrouter_keys = _parse_keys("OPENROUTER_API_KEYS")
     gemini_keys = _parse_keys("GOOGLE_GEMINI_KEYS")
     groq_keys = _parse_keys("GROQ_API_KEYS")
-    openai_keys = _parse_keys("OPENAI_API_KEY")
+    openai_keys = _parse_keys("OPENAI_API_KEYS")
 
     providers_config: List[Dict[str, Any]] = []
 
@@ -55,7 +55,7 @@ def get_providers_config() -> List[Dict[str, Any]]:
                     "https://generativelanguage.googleapis.com/v1beta/openai/"
                 ),
                 "keys": gemini_keys,
-                "default_model": "gemini-2.5-flash",
+                "default_model": "gemini-3.8-flash",
             }
         )
 
@@ -64,7 +64,7 @@ def get_providers_config() -> List[Dict[str, Any]]:
             {
                 "url": "https://api.openai.com/v1",
                 "keys": openai_keys,
-                "default_model": "gpt-6-luna",
+                "default_model": "gpt-4o-mini",
             }
         )
 
@@ -77,8 +77,8 @@ def get_default_model(provider_index: int = 0) -> str:
     falling back to a safe standard model if none are configured.
     """
     config = get_providers_config()
-    if config and len(config) > provider_index:
-        model = config[provider_index].get("default_model")
-        if isinstance(model, str):
-            return model
-    return "gpt-6-luna"
+    if config and 0 <= provider_index < len(config):
+        return config[provider_index].get("default_model", "gpt-4o-mini")
+    if config:
+        return config[0].get("default_model", "gpt-4o-mini")
+    return "gpt-4o-mini"
