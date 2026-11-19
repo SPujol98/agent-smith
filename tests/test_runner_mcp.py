@@ -1,5 +1,6 @@
 """Tests for SandboxRunner connected to an MCP server."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -50,9 +51,10 @@ final_answer(report)
 
     # Assert
     assert "final_answer(answer: str)" in manual
-    assert "- run_tests(candidate_code: str" in manual
+    assert "- run_tests(code: str" in manual
     assert result.success is True, result.error
-    assert result.final_answer_value == "All tests passed successfully."
+    assert result.final_answer_value is not None
+    assert json.loads(result.final_answer_value)["success"] is True
 
 
 def test_mcp_env_reaches_the_server(tmp_path: Path) -> None:

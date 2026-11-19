@@ -104,7 +104,7 @@ def test_manual_of_mbpp_server() -> None:
     # Assert
     assert manual.startswith(
         "Tools (call them as Python functions):\n"
-        "- run_tests(candidate_code: str, test_list: list[str], "
+        "- run_tests(code: str, test_list: list[str], "
         "test_imports: list[str] | None = None) -> str"
     )
 

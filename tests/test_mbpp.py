@@ -1,64 +1,100 @@
+"""The MBPP run_tests tool, as the subject defines it."""
+
+import json
+from typing import Any
+
 from mcp_tools_mbpp import run_tests
 
 
-def test_run_tests_assertion_success() -> None:
+def _report(code: str, tests: list[str], **kwargs: Any) -> dict[str, Any]:
+    """Call run_tests and parse its JSON answer."""
+    report: dict[str, Any] = json.loads(run_tests(code, tests, **kwargs))
+    return report
+
+
+def test_run_tests_returns_json_with_success_and_output() -> None:
     # Arrange
-    code = """
-def add(a, b):
-    return a + b
-"""
+    code = "def add(a, b):\n    return a + b"
     tests = ["assert add(1, 2) == 3", "assert add(-1, 1) == 0"]
 
     # Act
-    result = run_tests(code, tests)
+    report = _report(code, tests)
 
     # Assert
-    assert isinstance(result, str)
-    assert "passed" in result.lower() or "success" in result.lower()
+    assert report == {"success": True, "output": "All tests passed."}
 
 
-def test_run_tests_assertion_failure() -> None:
+def test_run_tests_reports_a_failed_assertion() -> None:
     # Arrange
-    code = """
-def add(a, b):
-    return a - b
-"""
-    tests = ["assert add(1, 2) == 2", "assert add(-1, 1) == 5"]
+    code = "def add(a, b):\n    return a - b"
+    tests = ["assert add(1, 2) == 3"]
 
     # Act
-    result = run_tests(code, tests)
+    report = _report(code, tests)
 
     # Assert
-    assert isinstance(result, str)
-    assert "assertionerror" in result.lower() or "failed" in result.lower()
+    assert report["success"] is False
+    assert "AssertionError" in report["output"]
 
 
-def test_run_tests_timeout_protection() -> None:
-    """Verify that run_tests prevents infinite loops and enforces
-    execution timeout."""
-    # Arrange: Function containing an infinite loop and assertion list
-    candidate_code = "def solution():\n    while True:\n        pass"
-    test_list = ["assert solution() == True"]
+def test_run_tests_keeps_what_the_code_prints() -> None:
+    # Arrange
+    code = "def f():\n    print('debug')\n    return 1"
+    tests = ["assert f() == 2"]
 
-    # Act: Run tests via MBPP tool signature
-    result = run_tests(candidate_code=candidate_code, test_list=test_list)
+    # Act
+    report = _report(code, tests)
 
-    # Assert: Must return an explicit timeout observation string
-    assert "timeout" in result.lower() or "exceeded" in result.lower()
+    # Assert
+    assert report["success"] is False
+    assert report["output"].startswith("debug\n")
 
 
-def test_run_tests_security_restriction() -> None:
-    """Verify that run_tests blocks unauthorized module imports
-    inside the sandbox."""
-    # Arrange: Candidate code attempting an unauthorized system import
-    candidate_code = "import os\nos.system('echo hacked')"
-    test_list = ["assert True"]
+def test_run_tests_accepts_the_subject_keyword_names() -> None:
+    """The moulinette may call it as run_tests(code=..., test_list=...)."""
+    # Act
+    raw = run_tests(code="x = 1", test_list=["assert x == 1"])
 
-    # Act: Run tests via MBPP tool signature
-    result = run_tests(candidate_code=candidate_code, test_list=test_list)
+    # Assert
+    assert json.loads(raw)["success"] is True
 
-    # Assert: Must catch SecurityError and return a descriptive text
-    assert "securityerror" in result.lower() or "not allowed" in result.lower()
+
+def test_run_tests_uses_test_imports() -> None:
+    # Arrange
+    code = "def root(x):\n    return math.sqrt(x)"
+    tests = ["assert root(9) == 3"]
+
+    # Act
+    report = _report(code, tests, test_imports=["import math"])
+
+    # Assert
+    assert report["success"] is True
+
+
+def test_run_tests_stops_infinite_loops() -> None:
+    # Arrange
+    code = "def solution():\n    while True:\n        pass"
+    tests = ["assert solution() is True"]
+
+    # Act
+    report = _report(code, tests)
+
+    # Assert
+    assert report["success"] is False
+    assert "TimeoutError" in report["output"]
+
+
+def test_run_tests_blocks_unauthorized_imports() -> None:
+    # Arrange
+    code = "import os\nos.system('echo hacked')"
+    tests = ["assert True"]
+
+    # Act
+    report = _report(code, tests)
+
+    # Assert
+    assert report["success"] is False
+    assert "SecurityError" in report["output"]
 
 
 def test_run_tests_accepts_solution_using_common_builtins() -> None:
@@ -79,7 +115,7 @@ def sort_desc(values):
     ]
 
     # Act
-    result = run_tests(code, tests)
+    report = _report(code, tests)
 
     # Assert
-    assert result == "All tests passed successfully."
+    assert report["success"] is True
