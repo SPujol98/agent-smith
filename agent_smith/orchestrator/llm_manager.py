@@ -14,7 +14,7 @@ class LLMProviderManager:
         providers_config: Optional[List[Dict[str, Any]]] = None,
         api_keys: Optional[List[str]] = None,
     ) -> None:
-    	self._explicit_model = model_name
+        self._explicit_model = model_name
         self.model_name = model_name
         self.default_provider_url = default_provider_url
 
