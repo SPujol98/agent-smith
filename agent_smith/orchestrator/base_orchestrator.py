@@ -159,7 +159,8 @@ class BaseOrchestrator(ABC):
                         ),
                     }
                 )
-
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except Exception as e:
                 error_message = str(e)
                 break
