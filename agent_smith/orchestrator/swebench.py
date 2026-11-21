@@ -1,9 +1,11 @@
 # Specific logic and prompts for SWE-bench
 # from base import BaseOrchestrator
+import os
+import signal
 import subprocess
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union, Callable
 
 from agent_smith.orchestrator.base_orchestrator import BaseOrchestrator
 from agent_smith.orchestrator.models import (
@@ -12,6 +14,8 @@ from agent_smith.orchestrator.models import (
     SWEBenchTaskInput,
 )
 from agent_smith.sandbox.runner import SandboxRunner
+
+SignalHandlerType = Optional[Union[Callable[[int, Any], None], int]]
 
 
 class SWEBenchOrchestrator(BaseOrchestrator):
@@ -46,19 +50,19 @@ class SWEBenchOrchestrator(BaseOrchestrator):
             "Thought: I need to inspect the files under /testbed/ to find "
             "where the bug resides.\n"
             "```python\n"
-            "content = read_file('/testbed/math_utils.py')\n"
+            "content = read_file('/testbed/math_utils.py', 1, 50)\n"
             "print(content)\n"
             "```\n"
             "Observation from sandbox:\n"
             "Stdout:\n"
-            "def divide(a, b):\n"
-            "    return a / b  # Bug: no zero division check\n"
+            "1: def divide(a, b):\n"
+            "2:     return a / b  # Bug: no zero division check\n"
             "...\n"
             "Thought: I found the issue. I will fix the bug in the file "
             "and then verify it.\n"
             "```python\n"
-            "edit_file('/testbed/math_utils.py', old_content='return a / b', "
-            'new_content=\'if b == 0: raise ValueError("Zero division"); '
+            "edit_file('/testbed/math_utils.py', old_str='return a / b', "
+            'new_str=\'if b == 0: raise ValueError("Zero division"); '
             "return a / b')\n"
             "print('Fixed successfully')\n"
             "```\n"
@@ -143,9 +147,31 @@ class SWEBenchOrchestrator(BaseOrchestrator):
         container_name = f"agent_smith_{safe_id}_{uuid.uuid4().hex[:6]}"
 
         docker_image = getattr(task_input, "docker_image", "python:3.10-slim")
+        base_system_prompt = self.system_prompt
+        effective_system_prompt = base_system_prompt
+        container_started = False
+        prev_sigterm: SignalHandlerType = None
+        prev_sigint: SignalHandlerType = None
+
+        def _handle_terminate_signal(signum: int, _frame: Any) -> None:
+            print(
+                f"[Signal] Received signal {signum}. "
+                f"Cleaning up container {container_name}..."
+            )
+            if container_started:
+                self._cleanup_docker_container(container_name)
+            os._exit(128 + signum)
 
         try:
             self._start_docker_container(docker_image, container_name)
+            container_started = True
+
+            prev_sigterm = signal.signal(
+                signal.SIGTERM, _handle_terminate_signal
+            )
+            prev_sigint = signal.signal(
+                signal.SIGINT, _handle_terminate_signal
+            )
 
             hints = (
                 task_input.hints_text
@@ -171,9 +197,11 @@ class SWEBenchOrchestrator(BaseOrchestrator):
                 mcp_env={"SWE_CONTAINER": container_name},
             ) as runner:
                 self.sandbox_runner = runner
-                self.system_prompt += (
-                    f"\n\n### Available functions:\n{runner.manual}"
+                effective_system_prompt = (
+                    f"{base_system_prompt}\n\n"
+                    f"### Available functions:\n{runner.manual}"
                 )
+                self.system_prompt = effective_system_prompt
 
                 return self.run(
                     task_id=task_input.instance_id,
@@ -181,6 +209,8 @@ class SWEBenchOrchestrator(BaseOrchestrator):
                     step_metrics_class=StepMetrics,
                     solution_output_class=SolutionOutput,
                 )
+        except (SystemExit, KeyboardInterrupt):
+            raise
         except Exception as e:
             return SolutionOutput(
                 task_id=str(task_input.instance_id),
@@ -193,7 +223,7 @@ class SWEBenchOrchestrator(BaseOrchestrator):
                 total_output_tokens=0,
                 total_time_seconds=0.0,
                 steps=[],
-                system_prompt=self.system_prompt,
+                system_prompt=effective_system_prompt,
                 error=f"MCPConnectionOrSandboxError: {str(e)}",
                 timestamp=(
                     datetime.now().isoformat()
@@ -202,4 +232,10 @@ class SWEBenchOrchestrator(BaseOrchestrator):
                 ),
             )
         finally:
-            self._cleanup_docker_container(container_name)
+            if prev_sigterm is not None:
+                signal.signal(signal.SIGTERM, prev_sigterm)
+            if prev_sigint is not None:
+                signal.signal(signal.SIGINT, prev_sigint)
+            self.system_prompt = base_system_prompt
+            if container_started:
+                self._cleanup_docker_container(container_name)

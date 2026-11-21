@@ -40,23 +40,30 @@ class MBPPOrchestrator(BaseOrchestrator):
             "```python ... ``` block.\n"
             "3. Observe the test results from the sandbox.\n"
             "4. When the solution is complete and verified, call "
-            "final_answer(your_solution_code).\n"
+            "final_answer(your_solution_code) passing the solution code as a "
+            "string.\n"
             "### Example Interaction:\n"
             "Thought: I need to write a function that adds two numbers. "
-            "Let's check the test cases first using run_tests().\n"
+            "Let's check the test cases first using "
+            "run_tests(code, test_list).\n"
             "```python\n"
-            "result = run_tests()\n"
+            "code = '''def add(a, b):\n    return a - b'''\n"
+            "tests = ['assert add(2, 3) == 5']\n"
+            "result = run_tests(code, tests)\n"
             "print(result)\n"
             "```\n"
             "Observation from sandbox:\n"
-            "Stdout:\nTests failed: expected 5, got 4\n"
+            "Stdout:\nTests failed: expected 5, got -1\n"
             "...\n"
-            "Thought: Ah, I made a mistake in the addition logic. "
-            "Let me fix it and submit the final answer.\n"
+            "Thought: Ah, I used '-' instead of '+'. "
+            "Let me fix the code string, verify it, and pass the code as a "
+            "string to final_answer().\n"
             "```python\n"
-            "def add(a, b):\n"
-            "    return a + b\n"
-            "final_answer(add)\n"
+            "solution_code = '''def add(a, b):\n    return a + b'''\n"
+            "tests = ['assert add(2, 3) == 5']\n"
+            "result = run_tests(solution_code, tests)\n"
+            "print(result)\n"
+            "final_answer(solution_code)\n"
             "```"
         )
 
@@ -86,14 +93,17 @@ class MBPPOrchestrator(BaseOrchestrator):
             f"Tests to pass:\n" + "\n".join(task_input.test_list)
         )
         mcp_stdio_cmd = "python mcp_tools_mbpp.py"
+        base_system_prompt = self.system_prompt
+        effective_system_prompt = base_system_prompt
 
         try:
             with SandboxRunner(mcp_stdio=mcp_stdio_cmd) as runner:
                 self.sandbox_runner = runner
-                self.system_prompt += (
-                    f"\n\n### Available functions:\n{runner.manual}"
+                effective_system_prompt = (
+                    f"{base_system_prompt}\n\n"
+                    f"### Available functions:\n{runner.manual}"
                 )
-
+                self.system_prompt = effective_system_prompt
                 return self.run(
                     task_id=str(task_input.task_id),
                     initial_task_prompt=initial_prompt,
@@ -112,7 +122,7 @@ class MBPPOrchestrator(BaseOrchestrator):
                 total_output_tokens=0,
                 total_time_seconds=0.0,
                 steps=[],
-                system_prompt=self.system_prompt,
+                system_prompt=effective_system_prompt,
                 error=f"MCPConnectionOrSandboxError: {str(e)}",
                 timestamp=(
                     datetime.now().isoformat()
@@ -120,3 +130,5 @@ class MBPPOrchestrator(BaseOrchestrator):
                     else ""
                 ),
             )
+        finally:
+            self.system_prompt = base_system_prompt
